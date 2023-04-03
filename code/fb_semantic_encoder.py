@@ -12,8 +12,6 @@ import torch
 from torch.autograd import Variable
 import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-
-
 """
 InferSent encoder
 """
@@ -21,33 +19,36 @@ InferSent encoder
 
 class BLSTMEncoder(nn.Module):
 
-    def __init__(self, word_to_ix, ix_to_word, glove_path = 'default'):
+    def __init__(self, word_to_ix, ix_to_word, glove_path='default'):
         super(BLSTMEncoder, self).__init__()
         # hardcode here for configuration used by pretrained facebook model
-        self.bsize = 128 #config['bsize']
-        self.word_emb_dim = 300 #config['word_emb_dim']
-        self.enc_lstm_dim = 2048# config['enc_lstm_dim']
-        self.pool_type = 'max'#config['pool_type']
-        self.dpout_model = 0.0 #config['dpout_model']
-        self.glove_path = '../../dataset/GloVe/glove.840B.300d.txt' if glove_path =='default' else glove_path
+        self.bsize = 128  #config['bsize']
+        self.word_emb_dim = 300  #config['word_emb_dim']
+        self.enc_lstm_dim = 2048  # config['enc_lstm_dim']
+        self.pool_type = 'max'  #config['pool_type']
+        self.dpout_model = 0.0  #config['dpout_model']
+        self.glove_path = '../../dataset/GloVe/glove.840B.300d.txt' if glove_path == 'default' else glove_path
 
-        self.enc_lstm = nn.LSTM(self.word_emb_dim, self.enc_lstm_dim, 1,
-                                bidirectional=True, dropout=self.dpout_model)
+        self.enc_lstm = nn.LSTM(self.word_emb_dim,
+                                self.enc_lstm_dim,
+                                1,
+                                bidirectional=True,
+                                dropout=self.dpout_model)
 
         # To help find words in glove, undo some transformations
         word_to_ix_local = word_to_ix.copy()
         #for w in word_to_ix_local.keys():
         #    if type(w) != int and '3' in w:
-                #print(w)
+        #print(w)
         #        idx = w.find('3')
-                #print(idx)
+        #print(idx)
         #        if idx < len(w)-1:
-                    #print(w)
+        #print(w)
         #            new_w = w[:idx]+w[idx+1]*3+w[idx+2:]
-                    #print(new_w)
+        #print(new_w)
         #            word_to_ix_local[new_w] = word_to_ix_local[w]
         #            ix_to_word[word_to_ix_local[new_w]] = new_w
-                    #word_to_ix_local.pop(w)
+        #word_to_ix_local.pop(w)
 
         word_vecs = self.get_glove(word_to_ix_local)
         #self.emb_layer = nn.Embedding(len(ix_to_word)+1, self.word_emb_dim, padding_idx=0)
@@ -58,8 +59,8 @@ class BLSTMEncoder(nn.Module):
         # Initialize the Embedding Layer with Glove word vecs
 
         #ix_to_word in case of wikitext is a list of strings, so edit the loop accordingly.
-        for i in range(0,len(ix_to_word)):
-            self.emb_layer.weight.data[i,:] = torch.FloatTensor(word_vecs[ix_to_word[i]])
+        for i in range(0, len(ix_to_word)):
+            self.emb_layer.weight.data[i, :] = torch.FloatTensor(word_vecs[ix_to_word[i]])
         del word_vecs
         del word_to_ix_local
 
@@ -110,8 +111,7 @@ class BLSTMEncoder(nn.Module):
         word_dict = {}
         if tokenize:
             from nltk.tokenize import word_tokenize
-        sentences = [s.split() if not tokenize else word_tokenize(s)
-                     for s in sentences]
+        sentences = [s.split() if not tokenize else word_tokenize(s) for s in sentences]
         for sent in sentences:
             for word in sent:
                 if word not in word_dict:
@@ -134,7 +134,7 @@ class BLSTMEncoder(nn.Module):
                 if word == 'UNK':
                     tmp_vec = np.fromstring(vec, sep=' ')
         print('Found {0}(/{1}) words with glove vectors'.format(
-                    len(word_vec), len(word_dict)))
+            len(word_vec), len(word_dict)))
 
         if replace_unk:
             for w in word_dict:
@@ -145,6 +145,7 @@ class BLSTMEncoder(nn.Module):
     def get_glove_k(self, K):
         assert hasattr(self, 'glove_path'), 'warning : you need \
                                              to set_glove_path(glove_path)'
+
         # create word_vec with k first glove vectors
         k = 0
         word_vec = {}
@@ -165,6 +166,7 @@ class BLSTMEncoder(nn.Module):
     def build_vocab(self, sentences, tokenize=True):
         assert hasattr(self, 'glove_path'), 'warning : you need \
                                              to set_glove_path(glove_path)'
+
         word_dict = self.get_word_dict(sentences, tokenize)
         self.word_vec = self.get_glove(word_dict)
         print('Vocab size : {0}'.format(len(self.word_vec)))
@@ -173,12 +175,14 @@ class BLSTMEncoder(nn.Module):
     def build_vocab_k_words(self, K):
         assert hasattr(self, 'glove_path'), 'warning : you need \
                                              to set_glove_path(glove_path)'
+
         self.word_vec = self.get_glove_k(K)
         print('Vocab size : {0}'.format(K))
 
     def update_vocab(self, sentences, tokenize=True):
         assert hasattr(self, 'glove_path'), 'warning : you need \
                                              to set_glove_path(glove_path)'
+
         assert hasattr(self, 'word_vec'), 'build_vocab before updating it'
         word_dict = self.get_word_dict(sentences, tokenize)
 
@@ -191,8 +195,8 @@ class BLSTMEncoder(nn.Module):
         if word_dict:
             new_word_vec = self.get_glove(word_dict)
             self.word_vec.update(new_word_vec)
-        print('New vocab size : {0} (added {1} words)'.format(
-                        len(self.word_vec), len(new_word_vec)))
+        print('New vocab size : {0} (added {1} words)'.format(len(self.word_vec),
+                                                              len(new_word_vec)))
 
     def get_batch(self, batch):
         # sent in batch in decreasing order of lengths
@@ -208,8 +212,8 @@ class BLSTMEncoder(nn.Module):
     def prepare_samples(self, sentences, bsize, tokenize, verbose):
         if tokenize:
             from nltk.tokenize import word_tokenize
-        sentences = [['<s>'] + s.split() + ['</s>'] if not tokenize else
-                     ['<s>']+word_tokenize(s)+['</s>'] for s in sentences]
+        sentences = [['<s>'] + s.split() + ['</s>'] if not tokenize else ['<s>'] +
+                     word_tokenize(s) + ['</s>'] for s in sentences]
         n_w = np.sum([len(x) for x in sentences])
 
         # filters words without glove vectors
@@ -225,8 +229,9 @@ class BLSTMEncoder(nn.Module):
         lengths = np.array([len(s) for s in sentences])
         n_wk = np.sum(lengths)
         if verbose:
-            print('Nb words kept : {0}/{1} ({2} %)'.format(
-                        n_wk, n_w, round((100.0 * n_wk) / n_w, 2)))
+            print('Nb words kept : {0}/{1} ({2} %)'.format(n_wk, n_w,
+                                                           round((100.0 * n_wk) / n_w,
+                                                                 2)))
 
         # sort by decreasing length
         lengths, idx_sort = np.sort(lengths)[::-1], np.argsort(-lengths)
@@ -241,10 +246,11 @@ class BLSTMEncoder(nn.Module):
             if self.training:
                 x = Variable(x).cuda()
             else:
-                x = Variable(x,volatile=True).cuda()
+                x = Variable(x, volatile=True).cuda()
             emb = self.emb_layer(x)
         else:
-            emb = x.view(n_steps*b_sz,-1).mm(self.emb_layer.weight).view(n_steps, b_sz, -1)
+            emb = x.view(n_steps * b_sz,
+                         -1).mm(self.emb_layer.weight).view(n_steps, b_sz, -1)
 
         packed = pack_padded_sequence(emb, lens)
 
@@ -271,11 +277,12 @@ class BLSTMEncoder(nn.Module):
                     x = Variable(x).cuda()
             emb = self.emb_layer(x)
         else:
-            emb = x.view(n_steps*b_sz,-1).mm(self.emb_layer.weight).view(n_steps, b_sz, -1)
+            emb = x.view(n_steps * b_sz,
+                         -1).mm(self.emb_layer.weight).view(n_steps, b_sz, -1)
 
         sent_output = self.enc_lstm(emb)[0]  # seqlen x batch x 2*nhid
         #print(sent_output.size())
-        
+
         if self.pool_type == "mean":
             print('not implemented')
         elif self.pool_type == "max":
@@ -286,17 +293,16 @@ class BLSTMEncoder(nn.Module):
 
     def encode(self, sentences, bsize=64, tokenize=True, verbose=False):
         tic = time.time()
-        sentences, lengths, idx_sort = self.prepare_samples(
-                        sentences, bsize, tokenize, verbose)
+        sentences, lengths, idx_sort = self.prepare_samples(sentences, bsize, tokenize,
+                                                            verbose)
 
         embeddings = []
         for stidx in range(0, len(sentences), bsize):
-            batch = Variable(self.get_batch(
-                        sentences[stidx:stidx + bsize]), volatile=True)
+            batch = Variable(self.get_batch(sentences[stidx:stidx + bsize]),
+                             volatile=True)
             if self.is_cuda():
                 batch = batch.cuda()
-            batch = self.forward(
-                (batch, lengths[stidx:stidx + bsize])).data.cpu().numpy()
+            batch = self.forward((batch, lengths[stidx:stidx + bsize])).data.cpu().numpy()
             embeddings.append(batch)
         embeddings = np.vstack(embeddings)
 
@@ -306,8 +312,8 @@ class BLSTMEncoder(nn.Module):
 
         if verbose:
             print('Speed : {0} sentences/s ({1} mode, bsize={2})'.format(
-                    round(len(embeddings)/(time.time()-tic), 2),
-                    'gpu' if self.is_cuda() else 'cpu', bsize))
+                round(len(embeddings) / (time.time() - tic), 2),
+                'gpu' if self.is_cuda() else 'cpu', bsize))
         return embeddings
 
     def visualize(self, sent, tokenize=True):
@@ -315,8 +321,7 @@ class BLSTMEncoder(nn.Module):
             from nltk.tokenize import word_tokenize
 
         sent = sent.split() if not tokenize else word_tokenize(sent)
-        sent = [['<s>'] + [word for word in sent if word in self.word_vec] +
-                ['</s>']]
+        sent = [['<s>'] + [word for word in sent if word in self.word_vec] + ['</s>']]
 
         if ' '.join(sent[0]) == '<s> </s>':
             import warnings
@@ -335,7 +340,7 @@ class BLSTMEncoder(nn.Module):
         # visualize model
         import matplotlib.pyplot as plt
         x = range(len(sent[0]))
-        y = [100.0*n/np.sum(argmaxs) for n in argmaxs]
+        y = [100.0 * n / np.sum(argmaxs) for n in argmaxs]
         plt.xticks(x, sent[0], rotation=45)
         plt.bar(x, y)
         plt.ylabel('%')
