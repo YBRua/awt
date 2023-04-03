@@ -1,0 +1,18 @@
+# python stuff
+__pycache__/
+
+# checkpoints
+*.pt
+ckpts/
+
+# logs
+*.txt
+*.log
+logs/
+
+# dataset and cache
+data/
+*.data
+
+# misc
+sent_encoder/
