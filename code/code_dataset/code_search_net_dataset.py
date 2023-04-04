@@ -20,7 +20,7 @@ class CodeSearchNetDataset(Dataset):
         return len(self.instances)
 
     def __getitem__(self, index):
-        return self.instances[index]
+        return self.vocab.convert_tokens_to_ids(self.instances[index].tokens)
 
     def dump_json(self, file_path: str) -> None:
         json_instances = [inst.serialize() for inst in self.instances]
