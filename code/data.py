@@ -8,7 +8,7 @@ class Dictionary(object):
     def __init__(self):
         self.word2idx = {}
         self.idx2word = []
-        self.counter = Counter()
+        self.word_freq = Counter()
         self.total = 0
 
     def add_word(self, word):
@@ -16,7 +16,7 @@ class Dictionary(object):
             self.idx2word.append(word)
             self.word2idx[word] = len(self.idx2word) - 1
         token_id = self.word2idx[word]
-        self.counter[token_id] += 1
+        self.word_freq[token_id] += 1
         self.total += 1
         return self.word2idx[word]
 
