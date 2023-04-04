@@ -7,7 +7,7 @@ from .code_tokenizer import sanitize_name
 from typing import List
 
 
-class DictionaryWrapper:
+class WikiTextVocabWrapper:
     def __init__(self, dictionary: Dictionary):
         self._dictionary = dictionary
         self._unk_id = self._dictionary.word2idx['<unk>']

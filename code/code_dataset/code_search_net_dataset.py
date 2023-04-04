@@ -2,7 +2,7 @@ import json
 from torch.utils.data import Dataset
 
 from .data_instance import DataInstance
-from .code_vocab import CodeVocab, DictionaryWrapper
+from .code_vocab import CodeVocab, WikiTextVocabWrapper
 from typing import Union, List
 
 
@@ -10,7 +10,7 @@ class CodeSearchNetDataset(Dataset):
     def __init__(
         self,
         instances: List[DataInstance],
-        vocab: Union[CodeVocab, DictionaryWrapper],
+        vocab: Union[CodeVocab, WikiTextVocabWrapper],
     ) -> None:
         super().__init__()
         self.instances = instances
