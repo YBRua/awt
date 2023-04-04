@@ -11,7 +11,7 @@ def sanitize_name(name):
 def split_name(c_token: str) -> List[str]:
     # special case handling for string literals
     if c_token.startswith('"') and c_token.endswith('"'):
-        return c_token[1:-1].split()
+        return ['"'] + c_token[1:-1].split() + ['"']
 
     res = []
     snake_splitted = _try_split_snake(c_token)
