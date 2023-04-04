@@ -213,7 +213,7 @@ parser.add_argument(
     type=float,
     default=0,
     help='amount of weight dropout to apply to the RNN hidden to hidden matrix')
-#GAN arguments
+# GAN arguments
 parser.add_argument('--discr_interval',
                     type=int,
                     default=1,
@@ -405,7 +405,7 @@ print('Args:', args)
 print('Model total parameters:', total_params)
 
 
-#convert word ids to text
+# convert word ids to text
 def convert_idx_to_words(idx):
     batch_list = []
     for i in range(0, idx.size(1)):
@@ -451,11 +451,11 @@ def evaluate(data_source, batch_size=10):
                                                   args,
                                                   all_msgs,
                                                   evaluation=True)
-        #get a batch of fake (edited) sequence from the generator
+        # get a batch of fake (edited) sequence from the generator
         fake_data_emb, fake_one_hot, fake_data_prob = model_gen.forward_sent(
             data, msgs, args.gumbel_temp)
         msg_out = model_gen.forward_msg_decode(fake_data_emb)
-        #get prediction (and the loss) of the discriminator on the real sequence. First gen the embeddings from the generator
+        # get prediction (and the loss) of the discriminator on the real sequence. First gen the embeddings from the generator
         data_emb = model_gen.forward_sent(data,
                                           msgs,
                                           args.gumbel_temp,
