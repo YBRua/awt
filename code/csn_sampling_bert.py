@@ -43,6 +43,7 @@ def parse_args_csn_sampling():
     parser.add_argument('--lang', type=str, default='java')
     parser.add_argument('--split', choices=['train', 'valid', 'test'], default='test')
     parser.add_argument('--file_ids', nargs='+', type=int, default=0)
+    parser.add_argument('--dataset_subsample_num', type=int, default=-1)
 
     # model and training
     parser.add_argument('--seed', type=int, default=1111, help='random seed')
@@ -196,12 +197,12 @@ def noisy_sampling(model_gen, sent_encoder_out, both_embeddings, data, samples_n
 
 
 def compare_msg_whole(msgs, msg_out, msg_len, msgs_segment):
-    per_sample_corrects = (msgs == msg_out).float().sum(dim=1)
-    return (per_sample_corrects == msg_len * msgs_segment).float().sum().item()
+    per_sample_corrects = (msgs == msg_out).long().sum(dim=1)
+    return (per_sample_corrects == msg_len * msgs_segment).long().sum().item()
 
 
 def compare_msg_bits(msgs, msg_out):
-    return int((msgs == msg_out).float().sum().item())
+    return (msgs == msg_out).long().sum().item()
 
 
 def evaluate(model_gen: TranslatorGeneratorModel,
@@ -240,6 +241,9 @@ def evaluate(model_gen: TranslatorGeneratorModel,
         data, lengths, msgs = batch
         data = data.to(device)
         msgs = msgs.to(device)
+
+        long_msg[:, long_msg_count * args.msg_len:long_msg_count * args.msg_len +
+                 args.msg_len] = msgs
 
         if args.use_lm_loss:
             hidden = lm.init_hidden(bsz=1)
@@ -333,15 +337,18 @@ def evaluate(model_gen: TranslatorGeneratorModel,
                              args.msg_len] = msg_out
                 l2_distances = l2_distances + bert_diff[best_beam_idx]
                 # meteor_tot = meteor_tot + meteor_beams[best_beam_idx]
-                logger.info('===== HERE COMES THE DECODING =====')
-                logger.info(f'sample #{batch_count:>5d}')
-                logger.info(f'original text: {orig_text}')
-                logger.info(f'modified text: {output_text_beams[best_beam_idx]}')
-                correct_bits = compare_msg_bits(msgs, torch.round(torch.sigmoid(msg_out)))
-                logger.info(f'correct bits: {int(correct_bits)}')
+                logger.info('=' * 90)
+                logger.info(f'sample #{batch_count}')
+                logger.info('-' * 90)
                 logger.info(f'gt  msg: {msgs.tolist()}')
                 logger.info(f'dec msg: {torch.round(torch.sigmoid(msg_out)).tolist()}')
+                correct_bits = compare_msg_bits(msgs, torch.round(torch.sigmoid(msg_out)))
+                logger.info(f'correct bits: {int(correct_bits)}')
                 logger.info(f'bert diff: {bert_diff[best_beam_idx]:.4f}')
+                logger.info('-' * 90)
+                logger.info(f'[ORIGINAL] {orig_text}')
+                logger.info(f'[MODIFIED] {output_text_beams[best_beam_idx]}')
+                logger.info('=' * 90)
             else:
                 # meteor_pair = 1
                 # meteor_tot = meteor_tot + meteor_pair
@@ -349,7 +356,8 @@ def evaluate(model_gen: TranslatorGeneratorModel,
                 long_msg_out[:,
                              long_msg_count * args.msg_len:long_msg_count * args.msg_len +
                              args.msg_len] = msg_out_random
-        if batch_count != 0 and (batch_count + 1) % args.msgs_segment == 0:
+        if ((batch_count != 0 and (batch_count + 1) % args.msgs_segment == 0)
+                or args.msgs_segment == 1):
             long_msg_count = 0
             tot_count = tot_count + 1
             tot_count_bits += long_msg.shape[0] * long_msg.shape[1]
@@ -359,7 +367,7 @@ def evaluate(model_gen: TranslatorGeneratorModel,
             correct_msg_count += compare_msg_whole(long_msg, long_msg_out, args.msg_len,
                                                    args.msgs_segment)
             correct_msg_count_bits += similar_bits
-            p_value.append(binomtest(similar_bits, all_bits, 0.5))
+            p_value.append(binomtest(similar_bits, all_bits, 0.5).pvalue)
         else:
             long_msg_count = long_msg_count + 1
 
@@ -421,8 +429,22 @@ def main(args):
         vocab = processor.build_vocabulary_on_instances(instances)
 
     vocab_size = len(vocab)
+    logger.info(f'vocab size: {vocab_size}')
 
-    dataset = CodeSearchNetDataset(instances[:512], vocab)
+    instances = [inst for inst in instances if len(inst.tokens) <= 120]
+    logger.info(f'num of total instances: {len(instances)}')
+
+    # random subsample for testing
+    if args.dataset_subsample_num <= 0:
+        subsampled = instances
+    else:
+        subsampled_idx = np.random.choice(len(instances),
+                                          args.dataset_subsample_num,
+                                          replace=False)
+        subsampled = [instances[i] for i in subsampled_idx]
+    logger.info(f'num of subsampled instances: {len(subsampled)}')
+
+    dataset = CodeSearchNetDataset(subsampled, vocab)
     collator = CSNWatermarkingCollator(0, args.msg_len, 512)
     dataloader = DataLoader(dataset, batch_size=1, collate_fn=collator)
 
@@ -462,7 +484,9 @@ def main(args):
     res = evaluate(model_gen, model_disc, lm, sbert_model, dataloader, vocab, device,
                    logger, args)
 
-    logger.info(prettify_res_dict(res, prefix=f'| {args.lang}-{args.split}'))
+    res_str = prettify_res_dict(res, prefix=f'| {args.lang}-{args.split} ')
+    logger.info(res_str)
+    print(res_str)
 
 
 if __name__ == '__main__':
