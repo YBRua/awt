@@ -1,5 +1,23 @@
 import torch
 import numpy as np
+from typing import Dict
+
+
+def prettify_res_dict(res: Dict, prefix: str = None) -> str:
+    res_str = '|'
+    for k, v in res.items():
+        if isinstance(v, float):
+            res_str += f' {k}: {v:.4f} |'
+        elif isinstance(v, int):
+            res_str += f' {k}: {v:3d} |'
+        else:
+            res_str += f' {k}: {v} |'
+
+    if prefix is not None:
+        assert isinstance(prefix, str), 'prefix must be a string'
+        res_str = prefix + res_str
+
+    return res_str
 
 
 def repackage_hidden(h):

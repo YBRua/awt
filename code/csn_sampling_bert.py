@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 from scipy.stats import binomtest
 from sklearn.metrics import f1_score
 
-from utils import repackage_hidden
+from utils import repackage_hidden, prettify_res_dict
 from data import Corpus
 from code_dataset import (
     CodeVocab,
@@ -28,7 +28,7 @@ from code_dataset import (
     CSNWatermarkingCollator,
 )
 
-from typing import List, Dict
+from typing import List
 
 
 def parse_args_csn_sampling():
@@ -389,23 +389,6 @@ def evaluate(model_gen: TranslatorGeneratorModel,
         'p_value': np.mean(p_value),
         'p_value_inst': p_value_smaller / len(p_value),
     }
-
-
-def prettify_res_dict(res: Dict, prefix: str = None) -> str:
-    res_str = '|'
-    for k, v in res.items():
-        if isinstance(v, float):
-            res_str += f' {k}: {v:.4f} |'
-        elif isinstance(v, int):
-            res_str += f' {k}: {v:3d} |'
-        else:
-            res_str += f' {k}: {v} |'
-
-    if prefix is not None:
-        assert isinstance(prefix, str), 'prefix must be a string'
-        res_str = prefix + res_str
-
-    return res_str
 
 
 def main(args):
