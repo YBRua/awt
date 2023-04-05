@@ -2,6 +2,7 @@ conda activate torch112
 CUDA_VISIBLE_DEVICES=1 python csn_main_train.py \
  --msg_len 4 \
  --data data/CodeSearchNet \
+ --lang java \
  --batch_size 80  \
  --epochs 200 \
  --save csn_java_noft \
@@ -11,4 +12,7 @@ CUDA_VISIBLE_DEVICES=1 python csn_main_train.py \
  --msg_weight 5 \
  --gen_weight 1.5 \
  --reconst_weight 1.5 \
- --scheduler
+ --scheduler \
+ --allow_cached_dataset \
+ --train_subsample_num 32000 \
+ --eval_subsample_num 4000 \

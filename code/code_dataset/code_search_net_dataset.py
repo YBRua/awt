@@ -7,6 +7,7 @@ from typing import Union, List
 
 
 class CodeSearchNetDataset(Dataset):
+
     def __init__(
         self,
         instances: List[DataInstance],
@@ -20,8 +21,7 @@ class CodeSearchNetDataset(Dataset):
         return len(self.instances)
 
     def __getitem__(self, index):
-        return self.vocab.convert_tokens_to_ids(
-            list(map(str.lower, self.instances[index].tokens)))
+        return self.vocab.convert_tokens_to_ids(self.instances[index].tokens)
 
     def dump_json(self, file_path: str) -> None:
         json_instances = [inst.serialize() for inst in self.instances]

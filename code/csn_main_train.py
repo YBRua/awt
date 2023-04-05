@@ -34,9 +34,8 @@ def parse_args_csn_training():
                         default='data/penn/',
                         help='location of the data corpus')
     parser.add_argument('--lang', type=str, default='java')
-    parser.add_argument('--file_ids', nargs='+', type=int, default=0)
-    parser.add_argument('--train_subsample_num', type=int, default=-1)
-    parser.add_argument('--eval_subsample_num', type=int, default=-1)
+    parser.add_argument('--train_subsample_num', type=int, default=0)
+    parser.add_argument('--eval_subsample_num', type=int, default=0)
     parser.add_argument('--allow_cached_dataset', action='store_true')
 
     # training arguments
@@ -83,6 +82,10 @@ def parse_args_csn_training():
     # checkpointing
     parser.add_argument('--save', type=str, default='./ckpts/csn_model')
     parser.add_argument('--resume', type=str, default='', help='path of model to resume')
+    parser.add_argument('--save_interval',
+                        type=int,
+                        default=20,
+                        help='saving models regualrly')
 
     # message arguments
     parser.add_argument('--msg_len',
@@ -350,6 +353,7 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
     total_loss_sem = 0
     total_loss_reconst = 0
     total_loss_lm = 0
+    total_msg_acc = 0
 
     progress = tqdm(dataloader)
     batch_count = 0
@@ -369,6 +373,8 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
         fake_data_emb, fake_one_hot, fake_data_prob = model_gen.forward_sent(
             token_ids, msgs, args.gumbel_temp, src_key_padding_mask=src_padding_mask)
         msg_out = model_gen.forward_msg_decode(fake_data_emb, src_padding_mask)
+        msg_preds = torch.round(torch.sigmoid(msg_out))
+        total_msg_acc += (msg_preds == msgs).float().mean().item()
 
         # get prediction (and the loss) of the discriminator on the real sequence
         # first get the embeddings of the original sentences
@@ -402,7 +408,7 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
             total_loss_sem += sem_loss.data
 
         # msg loss of the generator
-        msg_loss = criterion(msg_out, msgs)
+        msg_loss = criterion(msg_out, msgs.float())
 
         # lm loss of the generator
         if args.use_lm_loss:
@@ -435,6 +441,7 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
 
     return {
         'epoch': eid,
+        'msg_acc': total_msg_acc / batch_count,
         'gen_loss': total_loss_gen / batch_count,
         'msg_loss': total_loss_msg / batch_count,
         'recon_loss': total_loss_reconst / batch_count,
@@ -471,6 +478,7 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
     total_loss_recon = 0
     total_loss_sem = 0
     total_loss_lm = 0
+    total_msg_acc = 0
 
     progress = tqdm(dataloader)
     for bid, batch in enumerate(progress):
@@ -519,7 +527,7 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
         # add the gradients
         loss_disc = loss_disc_real + loss_disc_fake
         # update the discriminator
-        if batch % args.discr_interval == 0 and batch > 0:
+        if bid % args.discr_interval == 0 and bid > 0:
             optimizer_disc.step()
 
         # generator network update
@@ -533,6 +541,8 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
         msg_out = model_gen.forward_msg_decode(fake_data_emb,
                                                src_key_padding_mask=src_padding_mask)
         loss_msg = criterion(msg_out, msgs.float())
+        msg_preds = torch.round(torch.sigmoid(msg_out))
+        total_msg_acc += (msgs == msg_preds).float().mean().item()
         # reconstruct input sequence
         loss_recon = criterion_reconst(fake_data_prob, token_ids.view(-1))
 
@@ -580,14 +590,16 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
         avg_loss_recon = total_loss_recon / (bid + 1)
         avg_loss_sem = total_loss_sem / (bid + 1)
         avg_loss_lm = total_loss_lm / (bid + 1)
+        avg_msg_acc = total_msg_acc / (bid + 1)
 
         progress.set_description(f'| train {eid:3d} '
-                                 f'| l_gen {avg_loss_gen:.2f} '
-                                 f'| l_msg {avg_loss_msg:.2f} '
-                                 f'| l_recon {avg_loss_recon:.2f} '
-                                 f'| l_disc {avg_loss_disc:.2f} '
-                                 f'| l_sem {avg_loss_sem:.2f} '
-                                 f'| l_lm {avg_loss_lm:.2f} ')
+                                 f'| acc {avg_msg_acc:.4f}'
+                                 f'| l_gen {avg_loss_gen:.4f} '
+                                 f'| l_msg {avg_loss_msg:.4f} '
+                                 f'| l_recon {avg_loss_recon:.4f} '
+                                 f'| l_disc {avg_loss_disc:.4f} '
+                                 f'| l_sem {avg_loss_sem:.4f} '
+                                 f'| l_lm {avg_loss_lm:.4f} ')
 
         # update schedulers
         if args.scheduler:
@@ -596,6 +608,7 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
 
     return {
         'epoch': eid,
+        'msg_acc': avg_msg_acc,
         'gen_loss': total_loss_gen / (bid + 1),
         'msg_loss': total_loss_msg / (bid + 1),
         'recon_loss': total_loss_recon / (bid + 1),
@@ -614,15 +627,18 @@ def main(args):
     torch.manual_seed(args.seed)
 
     # loading data
-    train_cache_path = os.path.join(args.data, args.lang, 'train.json')
-    valid_cache_path = os.path.join(args.data, args.lang, 'valid.json')
-    test_cache_path = os.path.join(args.data, args.lang, 'test.json')
+    train_cache_path = os.path.join(args.data, args.lang,
+                                    f'train_{args.train_subsample_num}.json')
+    valid_cache_path = os.path.join(args.data, args.lang,
+                                    f'valid_{args.eval_subsample_num}.json')
+    test_cache_path = os.path.join(args.data, args.lang,
+                                   f'test_{args.eval_subsample_num}.json')
 
     train_dataset = None
     valid_dataset = None
     test_dataset = None
     # assumes atomicity of train, valid and test cache files
-    if args.allow_cached_datset and os.path.exists(train_cache_path):
+    if args.allow_cached_dataset and os.path.exists(train_cache_path):
         train_dataset = CodeSearchNetDataset.from_json(train_cache_path)
         valid_dataset = CodeSearchNetDataset.from_json(valid_cache_path)
         test_dataset = CodeSearchNetDataset.from_json(test_cache_path)
@@ -642,16 +658,19 @@ def main(args):
 
         if args.train_subsample_num > 0:
             subsampled_idx = np.random.choice(len(train_instances),
-                                              args.train_subsample_num,
+                                              min(args.train_subsample_num,
+                                                  len(train_instances)),
                                               replace=False)
             train_instances = [train_instances[i] for i in subsampled_idx]
         if args.eval_subsample_num > 0:
             subsampled_idx = np.random.choice(len(valid_instances),
-                                              args.valid_subsample_num,
+                                              min(args.eval_subsample_num,
+                                                  len(valid_instances)),
                                               replace=False)
             valid_instances = [valid_instances[i] for i in subsampled_idx]
             subsampled_idx = np.random.choice(len(test_instances),
-                                              args.valid_subsample_num,
+                                              min(args.eval_subsample_num,
+                                                  len(test_instances)),
                                               replace=False)
             test_instances = [test_instances[i] for i in subsampled_idx]
 
@@ -708,7 +727,7 @@ def main(args):
         model_gen = TranslatorGeneratorModel(
             vocab_size, args.emsize, args.msg_len, args.msg_in_mlp_layers,
             args.msg_in_mlp_nodes, args.encoding_layers, args.dropout_transformer,
-            args.dropouti, args.dropoute, args.tied, args.shared_encoder, args.attn_heads,
+            args.dropouti, args.dropoute, True, args.shared_encoder, args.attn_heads,
             autoenc_model)
         model_disc = TranslatorDiscriminatorModel(args.emsize, args.adv_encoding_layers,
                                                   args.dropout_transformer,
@@ -734,6 +753,8 @@ def main(args):
             if k in state:
                 state[k] = encoderState[k]
         sent_encoder.load_state_dict(state)
+    else:
+        sent_encoder = None
 
     # language model
     if args.use_lm_loss:
@@ -742,8 +763,10 @@ def main(args):
             lm = lang_model.RNNModel(args.model, vocab_size, args.emsize_lm, args.nhid,
                                      args.nlayers, args.dropout, args.dropouth,
                                      args.dropouti_lm, args.dropoute_lm, args.wdrop,
-                                     args.tied_lm, pretrained_lm)
+                                     True, pretrained_lm)
         del pretrained_lm
+    else:
+        lm = None
 
     # put everything on GPU
     device = torch.device('cuda')
