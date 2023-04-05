@@ -6,7 +6,7 @@ from .code_vocab import CodeVocab
 from .data_instance import DataInstance
 from .code_tokenizer import split_name
 
-from typing import List
+from typing import List, Optional, Callable
 
 
 class CodeSearchNetProcessor:
@@ -22,7 +22,8 @@ class CodeSearchNetProcessor:
 
     def _process_jsonl(self,
                        jsonl_file: str,
-                       show_progress: bool = True) -> List[DataInstance]:
+                       show_progress: bool = True,
+                       instance_filter: Optional[Callable] = None) -> List[DataInstance]:
         instances: List[DataInstance] = []
         json_instances = self._load_jsonl(jsonl_file)
 
@@ -40,19 +41,23 @@ class CodeSearchNetProcessor:
             for t in raw_code_tokens:
                 tokens.extend(split_name(t))
 
-            instances.append(
-                DataInstance(source_code=source_code,
-                             raw_source_tokens=raw_code_tokens,
-                             tokens=tokens))
+            instance = DataInstance(source_code=source_code,
+                                    raw_source_tokens=raw_code_tokens,
+                                    tokens=tokens)
+            if instance_filter is None or instance_filter(instance):
+                instances.append(instance)
 
         return instances
 
     def process_jsonls(self,
                        jsonl_files: List[str],
-                       show_progress: bool = True) -> List[DataInstance]:
+                       show_progress: bool = True,
+                       instance_filter: Optional[Callable] = None) -> List[DataInstance]:
         instances = []
         for jsonl_file in jsonl_files:
-            instances.extend(self._process_jsonl(jsonl_file, show_progress))
+            chunk_instances = self._process_jsonl(jsonl_file, show_progress,
+                                                  instance_filter)
+            instances.extend(chunk_instances)
 
         return instances
 

@@ -11,6 +11,7 @@ class WikiTextVocabWrapper:
     def __init__(self, dictionary: Dictionary):
         self._dictionary = dictionary
         self._unk_id = self._dictionary.word2idx['<unk>']
+        self.pad_idx = -1
 
     def __len__(self):
         return len(self._dictionary)
@@ -51,6 +52,7 @@ class CodeVocab:
         self.word_freq = defaultdict(int)
         self.add_word('<pad>')  # 0
         self.add_word('<unk>')  # 1
+        self.pad_idx = self.get_id_by_token('<pad>')
 
     def __len__(self):
         return len(self.idx2word)
