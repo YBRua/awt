@@ -2,6 +2,8 @@ import copy
 import torch
 import torch.nn as nn
 
+from torch.nn.utils.rnn import pack_padded_sequence
+
 from embed_regularize import embedded_dropout
 from locked_dropout import LockedDropout
 from weight_drop import WeightDrop
@@ -103,6 +105,51 @@ class RNNModel(nn.Module):
         self.decoder.bias.data.fill_(0)
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
+    def forward_padded(self,
+                       input,
+                       hidden,
+                       lengths,
+                       return_h=False,
+                       decode=False,
+                       one_hot=False):
+        if one_hot:
+            emb = torch.mm(input.view(input.size(0) * input.size(1), input.size(2)),
+                           self.encoder.weight)
+            emb = emb.view(input.size(0), input.size(1), self.ninp)
+        else:
+            emb = embedded_dropout(self.encoder,
+                                   input,
+                                   dropout=self.dropoute if self.training else 0)
+
+        emb = self.lockdrop(emb, self.dropouti)
+
+        raw_output = pack_padded_sequence(emb, lengths)
+        new_hidden = []
+        raw_outputs = []
+        outputs = []
+        for rnn_layer, rnn in enumerate(self.rnns):
+            raw_output, new_h = rnn(raw_output, hidden[rnn_layer])
+            new_hidden.append(new_h)
+            raw_outputs.append(raw_output)
+            if rnn_layer != self.nlayers - 1:
+                raw_output = self.lockdrop(raw_output, self.dropouth)
+                outputs.append(raw_output)
+        hidden = new_hidden
+
+        output = self.lockdrop(raw_output, self.dropout)
+        outputs.append(output)
+
+        if decode:
+            result = self.decoder(
+                output.view(output.size(0) * output.size(1), output.size(2)))
+        else:
+            result = output.view(output.size(0) * output.size(1), output.size(2))
+
+        if return_h:
+            return result, hidden, raw_outputs, outputs
+
+        return result, hidden
+
     def forward(self, input, hidden, return_h=False, decode=False, one_hot=False):
 
         if one_hot:
@@ -113,13 +160,11 @@ class RNNModel(nn.Module):
             emb = embedded_dropout(self.encoder,
                                    input,
                                    dropout=self.dropoute if self.training else 0)
-        #emb = self.idrop(emb)
 
         emb = self.lockdrop(emb, self.dropouti)
 
         raw_output = emb
         new_hidden = []
-        #raw_output, hidden = self.rnn(emb, hidden)
         raw_outputs = []
         outputs = []
         for l, rnn in enumerate(self.rnns):

@@ -5,8 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from embed_regularize import embedded_dropout
 from locked_dropout import LockedDropout
+from typing import Optional
 
 
 def sample_gumbel(x):
@@ -44,7 +44,6 @@ class PositionalEncoding(nn.Module):
 
 
 class TranslatorGeneratorModel(nn.Module):
-    """Container module with an encoder followed by a classification over vocab. The output is then passed to the message encoder."""
     def __init__(self,
                  ntoken,
                  ninp,
@@ -69,6 +68,7 @@ class TranslatorGeneratorModel(nn.Module):
         self.transformer_drop = transformer_drop
         self.embeddings = nn.Embedding(ntoken, ninp)
         self.attention_heads = attention_heads
+
         self.sent_encoder_layer = nn.TransformerEncoderLayer(d_model=ninp,
                                                              nhead=attention_heads,
                                                              dropout=transformer_drop)
@@ -88,25 +88,26 @@ class TranslatorGeneratorModel(nn.Module):
         self.tie_weights = tie_weights
         self.msg_in_mlp_layers = msg_in_mlp_layers
 
-        #MLP for the input message
+        # MLP for the input message
         if msg_in_mlp_layers == 1:
             self.msg_in_mlp = nn.Linear(msg_len, ninp)
         else:
             self.msg_in_mlp = [
-                nn.Linear(msg_len if l == 0 else msg_in_mlp_nodes[l - 1],
-                          msg_in_mlp_nodes[l] if l != msg_in_mlp_layers - 1 else ninp)
-                for l in range(msg_in_mlp_layers)
+                nn.Linear(
+                    msg_len if layer == 0 else msg_in_mlp_nodes[layer - 1],
+                    msg_in_mlp_nodes[layer] if layer != msg_in_mlp_layers - 1 else ninp)
+                for layer in range(msg_in_mlp_layers)
             ]
             self.msg_in_mlp = torch.nn.ModuleList(self.msg_in_mlp)
 
-        #mlp for the message decoding. Takes the last token output
+        # mlp for the message decoding. Takes the last token output
         self.msg_out_mlp = [nn.Linear(2 * ninp, msg_len)]
         self.msg_out_mlp = torch.nn.ModuleList(self.msg_out_mlp)
 
         if shared_encoder:
             self.msg_decoder = self.sent_encoder
 
-        #decodes the last transformer encoder layer output to vocab.
+        # decodes the last transformer encoder layer output to vocab.
         self.decoder = nn.Linear(ninp, ntoken)
 
         if tie_weights:
@@ -133,14 +134,16 @@ class TranslatorGeneratorModel(nn.Module):
                                         float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
 
-    def forward_msg_decode(self, input):
+    def forward_msg_decode(self,
+                           input: torch.Tensor,
+                           src_key_padding_mask: Optional[torch.Tensor] = None):
 
         input = input * math.sqrt(self.ninp)
         input = self.pos_encoder(input)
-        msg_decoder_out = self.msg_decoder(input)
+        msg_decoder_out = self.msg_decoder(input,
+                                           src_key_padding_mask=src_key_padding_mask)
 
         m = nn.AdaptiveAvgPool1d(1)
-        m2 = nn.AdaptiveMaxPool1d(1)
 
         msg_dec_avg = m(
             msg_decoder_out.view(msg_decoder_out.size(1), msg_decoder_out.size(2),
@@ -157,16 +160,22 @@ class TranslatorGeneratorModel(nn.Module):
 
         return decoded_msg_out
 
-    def forward_sent_encoder(self, input, msg_input, gumbel_temp, only_embedding=False):
+    def forward_sent_encoder(self,
+                             token_ids: torch.Tensor,
+                             msgs: torch.Tensor,
+                             gumbel_temp: float,
+                             only_embedding: bool = False,
+                             src_key_padding_mask: Optional[torch.Tensor] = None):
         if only_embedding:
-            emb = self.embeddings(input)
+            emb = self.embeddings(token_ids)
             return emb
 
-        emb = self.embeddings(input) * math.sqrt(self.ninp)
+        emb = self.embeddings(token_ids) * math.sqrt(self.ninp)
         emb = self.pos_encoder(emb)
 
         # L, B, H
-        sent_encoder_out = self.sent_encoder(emb)
+        sent_encoder_out = self.sent_encoder(emb,
+                                             src_key_padding_mask=src_key_padding_mask)
         m = nn.AdaptiveAvgPool1d(1)
 
         # B, H, 1
@@ -179,7 +188,7 @@ class TranslatorGeneratorModel(nn.Module):
                                              sent_embedding.size(1))
 
         # get msg fc
-        prev_msg_out = msg_input
+        prev_msg_out = msgs
 
         if self.msg_in_mlp_layers == 1:
             prev_msg_out = F.relu(self.msg_in_mlp(prev_msg_out.float()))
@@ -192,29 +201,40 @@ class TranslatorGeneratorModel(nn.Module):
         both_embeddings = sent_embedding.add(msg_out)
         return both_embeddings, sent_encoder_out
 
-    def forward_sent_decoder(self, both_embeddings, input_data, sent_encoder_out,
-                             gumbel_temp):
-        device = input_data.device
-        mask = self._generate_square_subsequent_mask(len(input_data)).to(device)
+    def forward_sent_decoder(self,
+                             both_embeddings: torch.Tensor,
+                             token_ids: torch.Tensor,
+                             sent_encoder_out: torch.Tensor,
+                             gumbel_temp: float,
+                             src_key_padding_mask: Optional[torch.Tensor] = None):
+        device = token_ids.device
+        tgt_mask = self._generate_square_subsequent_mask(len(token_ids)).to(device)
 
-        input_data_emb = self.embeddings(input_data)
+        input_data_emb = self.embeddings(token_ids)
 
-        input_decoder = torch.zeros([input_data.size(0),
-                                     input_data.size(1), self.ninp]).float()
-        input_decoder = input_decoder.to(device)
-        input_decoder[1:input_data_emb.size(0), :, :] = input_data_emb[
-            0:input_data_emb.size(0) - 1, :, :]
+        # L, B, E
+        decoder_inputs = torch.zeros_like(input_data_emb)
+        decoder_inputs[1:, :, :] = input_data_emb[:-1, :, :]
+
+        if src_key_padding_mask is not None:
+            # B, L
+            tgt_key_padding_mask = torch.zeros_like(src_key_padding_mask).bool()
+            tgt_key_padding_mask[:, 1:] = src_key_padding_mask[:, :-1]
+        else:
+            tgt_key_padding_mask = None
 
         both_embeddings_repeat = both_embeddings.view(1, both_embeddings.size(0),
                                                       both_embeddings.size(1))
-        both_embeddings_repeat = both_embeddings_repeat.repeat(input_data.size(0), 1, 1)
-        input_decoder = input_decoder + both_embeddings_repeat
-        input_decoder = self.pos_encoder(input_decoder)
+        both_embeddings_repeat = both_embeddings_repeat.repeat(token_ids.size(0), 1, 1)
+        decoder_inputs = decoder_inputs + both_embeddings_repeat
+        decoder_inputs = self.pos_encoder(decoder_inputs)
 
         # sent_decoded: L, B, H
-        sent_decoded = self.sent_decoder(input_decoder,
+        sent_decoded = self.sent_decoder(decoder_inputs,
                                          memory=sent_encoder_out,
-                                         tgt_mask=mask)
+                                         tgt_mask=tgt_mask,
+                                         tgt_key_padding_mask=tgt_key_padding_mask,
+                                         memory_key_padding_mask=src_key_padding_mask)
         # sent_decoded_vocab: LB, V
         sent_decoded_vocab = self.decoder(
             sent_decoded.view(
@@ -226,31 +246,44 @@ class TranslatorGeneratorModel(nn.Module):
                                                   hard=True)
         # sent_decoded_vocab_hot_out: L, B, V
         sent_decoded_vocab_hot_out = sent_decoded_vocab_hot.view(
-            input_decoder.size(0), input_decoder.size(1), sent_decoded_vocab_hot.size(1))
+            decoder_inputs.size(0), decoder_inputs.size(1),
+            sent_decoded_vocab_hot.size(1))
 
         sent_decoded_vocab_emb = torch.mm(sent_decoded_vocab_hot, self.embeddings.weight)
         # sent_decoded_vocab_emb: L, B, H
-        sent_decoded_vocab_emb = sent_decoded_vocab_emb.view(input_decoder.size(0),
-                                                             input_decoder.size(1),
-                                                             input_decoder.size(2))
+        sent_decoded_vocab_emb = sent_decoded_vocab_emb.view(decoder_inputs.size(0),
+                                                             decoder_inputs.size(1),
+                                                             decoder_inputs.size(2))
 
         sent_decoded_vocab_soft = gumbel_softmax_sample(sent_decoded_vocab,
                                                         tau=gumbel_temp)
 
         return sent_decoded_vocab_emb, sent_decoded_vocab_hot_out, sent_decoded_vocab_soft
 
-    def forward_sent(self, input, msg_input, gumbel_temp, only_embedding=False):
+    def forward_sent(self,
+                     token_ids: torch.Tensor,
+                     msgs: torch.Tensor,
+                     gumbel_temp: float,
+                     only_embedding: bool = False,
+                     src_key_padding_mask: Optional[torch.Tensor] = None):
         if only_embedding:
-            return self.forward_sent_encoder(input,
-                                             msg_input,
+            return self.forward_sent_encoder(token_ids,
+                                             msgs,
                                              gumbel_temp,
-                                             only_embedding=True)
-        sent_msg_embedding, encoder_out = self.forward_sent_encoder(input,
-                                                                    msg_input,
-                                                                    gumbel_temp,
-                                                                    only_embedding=False)
-        return self.forward_sent_decoder(sent_msg_embedding, input, encoder_out,
-                                         gumbel_temp)
+                                             only_embedding=True,
+                                             src_key_padding_mask=src_key_padding_mask)
+
+        sent_msg_embedding, encoder_out = self.forward_sent_encoder(
+            token_ids,
+            msgs,
+            gumbel_temp,
+            only_embedding=False,
+            src_key_padding_mask=src_key_padding_mask)
+        return self.forward_sent_decoder(sent_msg_embedding,
+                                         token_ids,
+                                         encoder_out,
+                                         gumbel_temp,
+                                         src_key_padding_mask=src_key_padding_mask)
 
 
 class TranslatorDiscriminatorModel(nn.Module):
@@ -260,7 +293,7 @@ class TranslatorDiscriminatorModel(nn.Module):
                  transformer_drop=0.1,
                  attention_heads=8,
                  dropouti=0.1):
-        #directly takes the embedding
+        # directly takes the embedding
         super(TranslatorDiscriminatorModel, self).__init__()
         self.lockdrop = LockedDropout()
         self.dropouti = dropouti
@@ -274,7 +307,7 @@ class TranslatorDiscriminatorModel(nn.Module):
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer,
                                                          nlayers_encoder)
 
-        #classification to fake and real.
+        # classification to fake and real.
         self.real_fake_classify = [nn.Linear(ninp * 2, 1)]
         self.real_fake_classify = torch.nn.ModuleList(self.real_fake_classify)
 
@@ -285,11 +318,13 @@ class TranslatorDiscriminatorModel(nn.Module):
             torch.nn.init.xavier_normal_(ff.weight)
             ff.bias.data.fill_(0.01)
 
-    def forward(self, input_emb):
-        #print(input_emb)
+    def forward(self,
+                input_emb: torch.Tensor,
+                src_key_padding_mask: Optional[torch.Tensor] = None):
         input_emb = input_emb * math.sqrt(self.ninp)
         input_emb = self.pos_encoder(input_emb)
-        discr_encoder_out = self.transformer_encoder(input_emb)
+        discr_encoder_out = self.transformer_encoder(
+            input_emb, src_key_padding_mask=src_key_padding_mask)
 
         last_state = discr_encoder_out[discr_encoder_out.size(0) - 1, :, :]
 
