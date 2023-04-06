@@ -5,14 +5,18 @@ CUDA_VISIBLE_DEVICES=1 python csn_main_train.py \
  --lang java \
  --batch_size 80  \
  --epochs 200 \
- --save csn_java_noft \
+ --save csn_java_full \
+ --resume csn_java_noft \
  --optimizer adam \
  --use_reconst_loss \
- --discr_interval 1 \
- --msg_weight 5 \
- --gen_weight 1.5 \
- --reconst_weight 1.5 \
+ --use_semantic_loss \
+ --sem_weight 6 \
+ --discr_interval 3 \
+ --msg_weight 6 \
+ --gen_weight 1 \
+ --reconst_weight 2 \
  --scheduler \
+ --shared_encoder 1 \
  --allow_cached_dataset \
  --train_subsample_num 36000 \
  --eval_subsample_num 8000 \

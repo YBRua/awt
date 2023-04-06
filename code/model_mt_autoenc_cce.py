@@ -20,7 +20,7 @@ def sample_gumbel(x):
 def gumbel_softmax_sample(x, tau=0.5):
     noise = sample_gumbel(x)
     y = (F.log_softmax(x, dim=-1) + noise) / tau
-    #ysft = F.softmax(y)
+    # ysft = F.softmax(y)
     return y.view_as(x)
 
 
