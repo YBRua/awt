@@ -18,7 +18,6 @@ InferSent encoder
 
 
 class BLSTMEncoder(nn.Module):
-
     def __init__(self, word_to_ix, ix_to_word, glove_path='default'):
         super(BLSTMEncoder, self).__init__()
         # hardcode here for configuration used by pretrained facebook model
@@ -84,7 +83,9 @@ class BLSTMEncoder(nn.Module):
         sent = sent.index_select(1, Variable(idx_sort))
 
         # Handling padding in Recurrent Networks
-        sent_packed = nn.utils.rnn.pack_padded_sequence(sent, sent_len)
+        sent_packed = nn.utils.rnn.pack_padded_sequence(sent,
+                                                        sent_len,
+                                                        enforce_sorted=False)
         sent_output = self.enc_lstm(sent_packed)[0]  # seqlen x batch x 2*nhid
         sent_output = nn.utils.rnn.pad_packed_sequence(sent_output)[0]
 
@@ -252,7 +253,7 @@ class BLSTMEncoder(nn.Module):
             emb = x.view(n_steps * b_sz,
                          -1).mm(self.emb_layer.weight).view(n_steps, b_sz, -1)
 
-        packed = pack_padded_sequence(emb, lens)
+        packed = pack_padded_sequence(emb, lens, enforce_sorted=False)
 
         sent_output = self.enc_lstm(packed)[0]  # seqlen x batch x 2*nhid
         sent_output = pad_packed_sequence(sent_output)[0]
