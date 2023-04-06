@@ -8,16 +8,27 @@ import argparse
 import numpy as np
 
 import data
-import model
+import lang_model
 
+from weight_drop import WeightDrop
+from split_cross import SplitCrossEntropyLoss
 from utils import batchify, get_batch, repackage_hidden
+from code_dataset.corpus_port import csn_dataset_to_corpus
+from code_dataset import (
+    CodeSearchNetDataset, )
 
 parser = argparse.ArgumentParser(
     description='PyTorch PennTreeBank RNN/LSTM Language Model')
+parser.add_argument('--use_wikitext', action='store_true', help='use wikitext dataset')
+parser.add_argument('--wikitext_path', type=str, default='data/wikitext-2')
+parser.add_argument('--train_source', type=str, default='train_36000.json')
+parser.add_argument('--valid_source', type=str, default='valid_8000.json')
+parser.add_argument('--test_source', type=str, default='test_8000.json')
 parser.add_argument('--data',
                     type=str,
-                    default='data/penn/',
+                    default='data/CodeSearchNet',
                     help='location of the data corpus')
+parser.add_argument('--lang', type=str, default='java')
 parser.add_argument('--model',
                     type=str,
                     default='LSTM',
@@ -52,7 +63,7 @@ parser.add_argument('--dropoute',
 parser.add_argument(
     '--wdrop',
     type=float,
-    default=0.5,
+    default=0,
     help='amount of weight dropout to apply to the RNN hidden to hidden matrix')
 parser.add_argument('--seed', type=int, default=1111, help='random seed')
 parser.add_argument('--nonmono', type=int, default=5, help='random seed')
@@ -71,14 +82,13 @@ parser.add_argument(
     '--alpha',
     type=float,
     default=2,
-    help='alpha L2 regularization on RNN activation (alpha = 0 means no regularization)')
+    help='alpha L2 regularization on RNN activation (0 means no regularization)')
 parser.add_argument(
     '--beta',
     type=float,
     default=1,
     help=
-    'beta slowness regularization applied on RNN activiation (beta = 0 means no regularization)'
-)
+    'beta slowness regularization applied on RNN activiation (0 means no regularization)')
 parser.add_argument('--wdecay',
                     type=float,
                     default=1.2e-6,
@@ -128,8 +138,20 @@ if os.path.exists(fn):
     corpus = torch.load(fn)
 else:
     print('Producing dataset...')
-    corpus = data.Corpus(args.data)
-    torch.save(corpus, fn)
+    if args.use_wikitext:
+        print('Using wikitext dataset')
+        corpus = data.Corpus(args.wikitext_path)
+    else:
+        print('Using CodeSearchNet dataset')
+        source_dir = os.path.join(args.data, args.lang)
+        train_dataset = CodeSearchNetDataset.from_json(
+            os.path.join(source_dir, args.train_source))
+        valid_dataset = CodeSearchNetDataset.from_json(
+            os.path.join(source_dir, args.valid_source))
+        test_dataset = CodeSearchNetDataset.from_json(
+            os.path.join(source_dir, args.test_source))
+        corpus = csn_dataset_to_corpus(train_dataset, valid_dataset, test_dataset)
+        torch.save(corpus, fn)
 
 eval_batch_size = 10
 test_batch_size = 1
@@ -141,22 +163,23 @@ test_data = batchify(corpus.test, test_batch_size, args)
 # Build the model
 ###############################################################################
 
-from splitcross import SplitCrossEntropyLoss
-
 criterion = None
 
 ntokens = len(corpus.dictionary)
-model = model.RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers,
-                       args.dropout, args.dropouth, args.dropouti, args.dropoute,
-                       args.wdrop, args.tied)
+model = lang_model.RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers,
+                            args.dropout, args.dropouth, args.dropouti, args.dropoute,
+                            args.wdrop, args.tied)
+print(model)
 ###
 if args.resume:
     print('Resuming model ...')
     model_load(args.resume)
     optimizer.param_groups[0]['lr'] = args.lr
-    model.dropouti, model.dropouth, model.dropout, args.dropoute = args.dropouti, args.dropouth, args.dropout, args.dropoute
+    model.dropouti = args.dropouti
+    model.dropouth = args.dropouth
+    model.dropout = args.dropout
+    model.dropoute = args.dropoute
     if args.wdrop:
-        from weight_drop import WeightDrop
         for rnn in model.rnns:
             if type(rnn) == WeightDrop:
                 rnn.dropout = args.wdrop
@@ -182,8 +205,7 @@ if args.cuda:
 ###
 params = list(model.parameters()) + list(criterion.parameters())
 total_params = sum(x.size()[0] * x.size()[1] if len(x.size()) > 1 else x.size()[0]
-                   for x in params
-                   if x.size())
+                   for x in params if x.size())
 print('Args:', args)
 print('Model total parameters:', total_params)
 
@@ -198,13 +220,12 @@ def evaluate(data_source, batch_size=10):
     if args.model == 'QRNN':
         model.reset()
     total_loss = 0
-    ntokens = len(corpus.dictionary)
     hidden = model.init_hidden(batch_size)
     for i in range(0, data_source.size(0) - 1, args.bptt):
-        data, targets = get_batch(data_source, i, args, evaluation=True)
-        output, hidden = model(data, hidden)
-        total_loss += len(data) * criterion(model.decoder.weight, model.decoder.bias,
-                                            output, targets).data
+        token_ids, targets = get_batch(data_source, i, args, evaluation=True)
+        output, hidden = model(token_ids, hidden)
+        total_loss += len(token_ids) * criterion(model.decoder.weight, model.decoder.bias,
+                                                 output, targets).data
         hidden = repackage_hidden(hidden)
     return total_loss.item() / len(data_source)
 
@@ -215,27 +236,23 @@ def train():
         model.reset()
     total_loss = 0
     start_time = time.time()
-    ntokens = len(corpus.dictionary)
     hidden = model.init_hidden(args.batch_size)
     batch, i = 0, 0
     while i < train_data.size(0) - 1 - 1:
         bptt = args.bptt if np.random.random() < 0.95 else args.bptt / 2.
         # Prevent excessively small or negative sequence lengths
         seq_len = max(5, int(np.random.normal(bptt, 5)))
-        # There's a very small chance that it could select a very long sequence length resulting in OOM
-        # seq_len = min(seq_len, args.bptt + 10)
 
         lr2 = optimizer.param_groups[0]['lr']
         optimizer.param_groups[0]['lr'] = lr2 * seq_len / args.bptt
         model.train()
-        data, targets = get_batch(train_data, i, args, seq_len=seq_len)
+        token_ids, targets = get_batch(train_data, i, args, seq_len=seq_len)
 
-        # Starting each batch, we detach the hidden state from how it was previously produced.
-        # If we didn't, the model would try backpropagating all the way to start of the dataset.
+        # detach the hidden state from how it was previously produced.
         hidden = repackage_hidden(hidden)
         optimizer.zero_grad()
 
-        output, hidden, rnn_hs, dropped_rnn_hs = model(data, hidden, return_h=True)
+        output, hidden, rnn_hs, dropped_rnn_hs = model(token_ids, hidden, return_h=True)
         raw_loss = criterion(model.decoder.weight, model.decoder.bias, output, targets)
 
         loss = raw_loss
@@ -281,7 +298,9 @@ stored_loss = 100000000
 # At any point you can hit Ctrl + C to break out of training early.
 try:
     optimizer = None
-    # Ensure the optimizer is optimizing params, which includes both the model's weights as well as the criterion's weight (i.e. Adaptive Softmax)
+    # Ensure the optimizer is optimizing params,
+    # which includes both the model's weights
+    # as well as the criterion's weight (i.e. Adaptive Softmax)
     if args.optimizer == 'sgd':
         optimizer = torch.optim.SGD(params, lr=args.lr, weight_decay=args.wdecay)
     if args.optimizer == 'adam':
@@ -326,8 +345,8 @@ try:
                 stored_loss = val_loss
 
             if args.optimizer == 'sgd' and 't0' not in optimizer.param_groups[0] and (
-                    len(best_val_loss) > args.nonmono and
-                    val_loss > min(best_val_loss[:-args.nonmono])):
+                    len(best_val_loss) > args.nonmono
+                    and val_loss > min(best_val_loss[:-args.nonmono])):
                 print('Switching to ASGD')
                 optimizer = torch.optim.ASGD(model.parameters(),
                                              lr=args.lr,

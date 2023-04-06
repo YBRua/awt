@@ -5,6 +5,7 @@ from collections import Counter
 
 
 class Dictionary(object):
+
     def __init__(self):
         self.word2idx = {}
         self.idx2word = []
@@ -25,11 +26,17 @@ class Dictionary(object):
 
 
 class Corpus(object):
-    def __init__(self, path):
+
+    def __init__(self, path=None):
         self.dictionary = Dictionary()
-        self.train = self.tokenize(os.path.join(path, 'train.txt'))
-        self.valid = self.tokenize(os.path.join(path, 'valid.txt'))
-        self.test = self.tokenize(os.path.join(path, 'test.txt'))
+        if path is not None:
+            self.train = self.tokenize(os.path.join(path, 'train.txt'))
+            self.valid = self.tokenize(os.path.join(path, 'valid.txt'))
+            self.test = self.tokenize(os.path.join(path, 'test.txt'))
+        else:
+            self.train = None
+            self.valid = None
+            self.test = None
 
     def tokenize(self, path):
         """Tokenizes a text file."""
