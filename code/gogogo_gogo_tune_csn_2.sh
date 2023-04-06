@@ -1,5 +1,5 @@
 conda activate torch112
-CUDA_VISIBLE_DEVICES=1 python csn_main_train.py \
+CUDA_VISIBLE_DEVICES=4 python csn_main_train.py \
  --msg_len 4 \
  --data data/CodeSearchNet \
  --lang java \
@@ -11,6 +11,9 @@ CUDA_VISIBLE_DEVICES=1 python csn_main_train.py \
  --use_reconst_loss \
  --use_semantic_loss \
  --sem_weight 6 \
+ --use_lm_loss \
+ --lm_weight 1.3 \
+ --lm_ckpt csn_lm.pt \
  --discr_interval 3 \
  --msg_weight 6 \
  --gen_weight 1 \

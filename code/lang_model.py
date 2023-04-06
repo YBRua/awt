@@ -2,7 +2,7 @@ import copy
 import torch
 import torch.nn as nn
 
-from torch.nn.utils.rnn import pack_padded_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from embed_regularize import embedded_dropout
 from locked_dropout import LockedDropout
@@ -11,6 +11,7 @@ from weight_drop import WeightDrop
 
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
+
     def __init__(self,
                  rnn_type,
                  ntoken,
@@ -97,7 +98,8 @@ class RNNModel(nn.Module):
             self.init_lstm_weights(loaded_model)
 
     def reset(self):
-        if self.rnn_type == 'QRNN': [r.reset() for r in self.rnns]
+        if self.rnn_type == 'QRNN':
+            [r.reset() for r in self.rnns]
 
     def init_weights(self):
         initrange = 0.1
@@ -123,7 +125,7 @@ class RNNModel(nn.Module):
 
         emb = self.lockdrop(emb, self.dropouti)
 
-        raw_output = pack_padded_sequence(emb, lengths)
+        raw_output = pack_padded_sequence(emb, lengths, enforce_sorted=False)
         new_hidden = []
         raw_outputs = []
         outputs = []
@@ -132,10 +134,15 @@ class RNNModel(nn.Module):
             new_hidden.append(new_h)
             raw_outputs.append(raw_output)
             if rnn_layer != self.nlayers - 1:
+                raw_output, lengths = pad_packed_sequence(raw_output)
                 raw_output = self.lockdrop(raw_output, self.dropouth)
                 outputs.append(raw_output)
+                raw_output = pack_padded_sequence(raw_output,
+                                                  lengths,
+                                                  enforce_sorted=False)
         hidden = new_hidden
 
+        raw_output = pad_packed_sequence(raw_output)[0]
         output = self.lockdrop(raw_output, self.dropout)
         outputs.append(output)
 
@@ -217,10 +224,10 @@ class RNNModel(nn.Module):
 
             for i in range(self.nlayers):
                 self.rnns[i].weight_hh_l0.data = copy.deepcopy(
-                    model.rnns[i].module.weight_hh_l0_raw.data)
+                    model.rnns[i].weight_hh_l0.data)
                 self.rnns[i].weight_ih_l0.data = copy.deepcopy(
-                    model.rnns[i].module.weight_ih_l0.data)
+                    model.rnns[i].weight_ih_l0.data)
                 self.rnns[i].bias_hh_l0.data = copy.deepcopy(
-                    model.rnns[i].module.bias_hh_l0.data)
+                    model.rnns[i].bias_hh_l0.data)
                 self.rnns[i].bias_ih_l0.data = copy.deepcopy(
-                    model.rnns[i].module.bias_ih_l0.data)
+                    model.rnns[i].bias_ih_l0.data)

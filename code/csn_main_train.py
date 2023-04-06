@@ -418,7 +418,7 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
             lm_inputs = fake_one_hot[0:fake_one_hot.size(0) - 1]
             lm_out, hidden = lm.forward_padded(lm_inputs,
                                                hidden,
-                                               lengths,
+                                               lengths - 1,
                                                decode=True,
                                                one_hot=True)
             lm_loss = criterion_lm(lm_out, lm_targets)
@@ -567,7 +567,7 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
             lm_inputs = fake_one_hot[0:fake_one_hot.size(0) - 1]
             lm_out, hidden = lm.forward_padded(lm_inputs,
                                                hidden,
-                                               lengths,
+                                               lengths - 1,
                                                decode=True,
                                                one_hot=True)
             lm_loss = criterion_lm(lm_out, lm_targets)
