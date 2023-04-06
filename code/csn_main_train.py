@@ -196,7 +196,7 @@ def parse_args_csn_training():
                         help='The factor multiplied with the lm loss')
     parser.add_argument('--lm_ckpt',
                         type=str,
-                        default='WT2_lm.pt',
+                        default='ckpts/WT2_lm.pt',
                         help='path to the fine tuned language model')
 
     # lang model params.
@@ -284,10 +284,10 @@ def get_jsonl_filenames(args, split: str, chunk_ids: List[int]) -> List[str]:
 
 def resume_models(file_prefix: str):
     with open(f'{file_prefix}_gen.pt', 'rb') as f:
-        gen_ckpt = torch.load(f, map_location='cpu')
+        gen_ckpt = torch.load(f)
         model_gen, criterion, criterion_recon, optimizer_gen = gen_ckpt
     with open(f'{file_prefix}_disc.pt', 'rb') as f:
-        discr_ckpt = torch.load(f, map_location='cpu')
+        discr_ckpt = torch.load(f)
         model_discr, criterion, criterion_recon, optimizer_discr = discr_ckpt
 
     return {
@@ -747,7 +747,7 @@ def main(args):
         idx2word = vocab.idx2word
 
         sent_encoder = BLSTMEncoder(word2idx, idx2word, args.glove_path)
-        encoderState = torch.load(args.infersent_path, map_location='cpu')
+        encoderState = torch.load(args.infersent_path)
         state = sent_encoder.state_dict()
         for k in encoderState:
             if k in state:
@@ -759,7 +759,7 @@ def main(args):
     # language model
     if args.use_lm_loss:
         with open(args.lm_ckpt, 'rb') as f:
-            pretrained_lm, _, _ = torch.load(f, map_location='cpu')
+            pretrained_lm, _, _ = torch.load(f)
             lm = lang_model.RNNModel(args.model, vocab_size, args.emsize_lm, args.nhid,
                                      args.nlayers, args.dropout, args.dropouth,
                                      args.dropouti_lm, args.dropoute_lm, args.wdrop,
@@ -787,38 +787,37 @@ def main(args):
     logger.info(f'total parameters: {total_params:,}')
 
     # construct optimizers
-    if args.resume:
-        optimizer_gen = saved_dict['optimizer_gen']
-        optimizer_disc = saved_dict['optimizer_disc']
-
-        if args.scheduler:
-            optimizer_gen.param_groups[0]['lr'] = scheduler_gen.get_lr()
-            optimizer_disc.param_groups[0]['lr'] = scheduler_disc.get_lr()
-        else:
-            optimizer_gen.param_groups[0]['lr'] = args.lr
-            optimizer_disc.param_groups[0]['lr'] = args.lr
+    # if args.resume:
+    #     optimizer_gen = saved_dict['optimizer_gen']
+    #     optimizer_disc = saved_dict['optimizer_disc']
+    #     if args.scheduler:
+    #         optimizer_gen.param_groups[0]['lr'] = scheduler_gen.get_lr()
+    #         optimizer_disc.param_groups[0]['lr'] = scheduler_disc.get_lr()
+    #     else:
+    #         optimizer_gen.param_groups[0]['lr'] = args.lr
+    #         optimizer_disc.param_groups[0]['lr'] = args.lr
+    # else:
+    if args.optimizer == 'sgd':
+        # optimizer_gen = torch.optim.SGD(params_gen,
+        #                                 lr=args.lr,
+        #                                 weight_decay=args.wdecay)
+        # optimizer_disc = torch.optim.SGD(params_disc,
+        #                                  lr=args.lr,
+        #                                  weight_decay=args.wdecay)
+        raise NotImplementedError('sgd not implemented yet')
+    elif args.optimizer == 'adam':
+        optimizer_gen = torch.optim.Adam(
+            params_gen,
+            lr=scheduler_gen.get_lr() if args.scheduler else args.lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.wdecay)
+        optimizer_disc = torch.optim.Adam(
+            params_disc,
+            lr=scheduler_disc.get_lr() if args.scheduler else args.disc_lr,
+            betas=(args.beta1, args.beta2),
+            weight_decay=args.wdecay)
     else:
-        if args.optimizer == 'sgd':
-            # optimizer_gen = torch.optim.SGD(params_gen,
-            #                                 lr=args.lr,
-            #                                 weight_decay=args.wdecay)
-            # optimizer_disc = torch.optim.SGD(params_disc,
-            #                                  lr=args.lr,
-            #                                  weight_decay=args.wdecay)
-            raise NotImplementedError('sgd not implemented yet')
-        elif args.optimizer == 'adam':
-            optimizer_gen = torch.optim.Adam(
-                params_gen,
-                lr=scheduler_gen.get_lr() if args.scheduler else args.lr,
-                betas=(args.beta1, args.beta2),
-                weight_decay=args.wdecay)
-            optimizer_disc = torch.optim.Adam(
-                params_disc,
-                lr=scheduler_disc.get_lr() if args.scheduler else args.disc_lr,
-                betas=(args.beta1, args.beta2),
-                weight_decay=args.wdecay)
-        else:
-            raise RuntimeError(f'unknown optimizer: {args.optimizer}')
+        raise RuntimeError(f'unknown optimizer: {args.optimizer}')
 
     # training loop
     stored_loss = float('inf')
