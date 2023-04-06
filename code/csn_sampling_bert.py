@@ -35,7 +35,7 @@ def parse_args_csn_sampling():
     parser = ArgumentParser()
 
     # dataset
-    parser.add_argument('--vocab_source', choices=['wikitext', 'csn'], default='wikitext')
+    parser.add_argument('--vocab_source', type=str, default='wikitext')
     parser.add_argument('--data',
                         type=str,
                         default='data/CodeSearchNet',
@@ -409,7 +409,8 @@ def main(args):
         corpus = Corpus('./data/wikitext-2')
         vocab = WikiTextVocabWrapper(corpus.dictionary)
     else:
-        vocab = processor.build_vocabulary_on_instances(instances)
+        _train_dataset = CodeSearchNetDataset.from_json(args.vocab_source)
+        vocab = _train_dataset.vocab
 
     vocab_size = len(vocab)
     logger.info(f'vocab size: {vocab_size}')
