@@ -312,7 +312,6 @@ def save_models(file_prefix: str, model_gen: TranslatorGeneratorModel,
 
 
 class LRScheduler:
-
     def __init__(self, d_model: int, warm_up: int):
         self._step_num = 1
         self.d_model = d_model
@@ -356,88 +355,85 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
     total_msg_acc = 0
 
     progress = tqdm(dataloader)
+    progress.set_description('| eval |')
     batch_count = 0
-    for bid, batch in enumerate(progress):
-        token_ids, lengths, msgs, src_padding_mask = batch
+    with torch.no_grad():
+        for bid, batch in enumerate(progress):
+            token_ids, lengths, msgs, src_padding_mask = batch
 
-        token_ids = token_ids.to(device)
-        msgs = msgs.to(device)
-        src_padding_mask = src_padding_mask.to(device)
+            token_ids = token_ids.to(device)
+            msgs = msgs.to(device)
+            src_padding_mask = src_padding_mask.to(device)
 
-        B = token_ids.size(1)
+            B = token_ids.size(1)
 
-        if args.use_lm_loss:
-            hidden = lm.init_hidden(B)
+            if args.use_lm_loss:
+                hidden = lm.init_hidden(B)
 
-        # generate a batch of fake (edited) sequence
-        fake_data_emb, fake_one_hot, fake_data_prob = model_gen.forward_sent(
-            token_ids, msgs, args.gumbel_temp, src_key_padding_mask=src_padding_mask)
-        msg_out = model_gen.forward_msg_decode(fake_data_emb, src_padding_mask)
-        msg_preds = torch.round(torch.sigmoid(msg_out))
-        total_msg_acc += (msg_preds == msgs).float().mean().item()
+            # generate a batch of fake (edited) sequence
+            fake_data_emb, fake_one_hot, fake_data_prob = model_gen.forward_sent(
+                token_ids, msgs, args.gumbel_temp, src_key_padding_mask=src_padding_mask)
+            msg_out = model_gen.forward_msg_decode(fake_data_emb, src_padding_mask)
+            msg_preds = torch.round(torch.sigmoid(msg_out))
+            total_msg_acc += (msg_preds == msgs).float().mean().item()
 
-        # get prediction (and the loss) of the discriminator on the real sequence
-        # first get the embeddings of the original sentences
-        data_emb = model_gen.forward_sent(token_ids,
-                                          msgs,
-                                          args.gumbel_temp,
-                                          only_embedding=True,
-                                          src_key_padding_mask=src_padding_mask)
-        real_out = model_disc(data_emb, src_padding_mask)
-        label = torch.full((token_ids.size(1), 1), REAL_LABEL_VAL)
-        label = label.to(device)
-        disc_loss_real = criterion(real_out, label.float())
+            # get prediction (and the loss) of the discriminator on the real sequence
+            # first get the embeddings of the original sentences
+            data_emb = model_gen.forward_sent(token_ids,
+                                              msgs,
+                                              args.gumbel_temp,
+                                              only_embedding=True,
+                                              src_key_padding_mask=src_padding_mask)
+            real_out = model_disc(data_emb, src_padding_mask)
+            label = torch.full((token_ids.size(1), 1), REAL_LABEL_VAL)
+            label = label.to(device)
+            disc_loss_real = criterion(real_out, label.float())
 
-        # get prediction (and the loss) of the discriminator on the fake sequence
-        fake_out = model_disc(fake_data_emb.detach(), src_padding_mask)
-        label.fill_(FAKE_LABEL_VAL)
-        disc_loss_fake = criterion(fake_out, label.float())
-        disc_loss = disc_loss_real + disc_loss_fake
+            # get prediction (and the loss) of the discriminator on the fake sequence
+            fake_out = model_disc(fake_data_emb.detach(), src_padding_mask)
+            label.fill_(FAKE_LABEL_VAL)
+            disc_loss_fake = criterion(fake_out, label.float())
+            disc_loss = disc_loss_real + disc_loss_fake
 
-        # generator loss
-        label.fill_(REAL_LABEL_VAL)
-        loss_gen_adv = criterion(fake_out, label.float())
+            # generator loss
+            label.fill_(REAL_LABEL_VAL)
+            loss_gen_adv = criterion(fake_out, label.float())
 
-        # semantic loss
-        if args.use_semantic_loss:
-            orig_sem_emb = sent_encoder.forward_encode(token_ids, lengths)
-            fake_sem_emb = sent_encoder.forward_encode(fake_one_hot,
-                                                       lengths,
-                                                       one_hot=True)
-            sem_loss = criterion_sem(orig_sem_emb, fake_sem_emb)
-            total_loss_sem += sem_loss.data
+            # semantic loss
+            if args.use_semantic_loss:
+                orig_sem_emb = sent_encoder.forward_encode(token_ids, lengths)
+                fake_sem_emb = sent_encoder.forward_encode(fake_one_hot,
+                                                           lengths,
+                                                           one_hot=True)
+                sem_loss = criterion_sem(orig_sem_emb, fake_sem_emb)
+                total_loss_sem += sem_loss.item()
 
-        # msg loss of the generator
-        msg_loss = criterion(msg_out, msgs.float())
+            # msg loss of the generator
+            msg_loss = criterion(msg_out, msgs.float())
 
-        # lm loss of the generator
-        if args.use_lm_loss:
-            lm_targets = fake_one_hot[1:fake_one_hot.size(0)]
-            lm_targets = torch.argmax(lm_targets, dim=-1)
-            lm_targets = lm_targets.view(lm_targets.size(0) * lm_targets.size(1),)
-            lm_inputs = fake_one_hot[0:fake_one_hot.size(0) - 1]
-            lm_out, hidden = lm.forward_padded(lm_inputs,
-                                               hidden,
-                                               lengths - 1,
-                                               decode=True,
-                                               one_hot=True)
-            lm_loss = criterion_lm(lm_out, lm_targets)
-            total_loss_lm += lm_loss.item()
-            hidden = repackage_hidden(hidden)
+            # lm loss of the generator
+            if args.use_lm_loss:
+                lm_targets = fake_one_hot[1:fake_one_hot.size(0)]
+                lm_targets = torch.argmax(lm_targets, dim=-1)
+                lm_targets = lm_targets.view(lm_targets.size(0) * lm_targets.size(1), )
+                lm_inputs = fake_one_hot[0:fake_one_hot.size(0) - 1]
+                lm_out, hidden = lm.forward_padded(lm_inputs,
+                                                   hidden,
+                                                   lengths - 1,
+                                                   decode=True,
+                                                   one_hot=True)
+                lm_loss = criterion_lm(lm_out, lm_targets)
+                total_loss_lm += lm_loss.item()
+                hidden = repackage_hidden(hidden)
 
-        # reconstruction loss
-        reconst_loss = criterion_recon(fake_data_prob, token_ids.view(-1))
-        total_loss_reconst += reconst_loss.item()
+            # reconstruction loss
+            reconst_loss = criterion_recon(fake_data_prob, token_ids.view(-1))
+            total_loss_reconst += reconst_loss.item()
 
-        total_loss_gen += loss_gen_adv.item()
-        total_loss_disc += disc_loss.item()
-        total_loss_msg += msg_loss.item()
-        batch_count = batch_count + 1
-
-    if args.use_semantic_loss:
-        total_loss_sem = total_loss_sem.item()
-    if args.use_lm_loss:
-        total_loss_lm = total_loss_lm.item()
+            total_loss_gen += loss_gen_adv.item()
+            total_loss_disc += disc_loss.item()
+            total_loss_msg += msg_loss.item()
+            batch_count = batch_count + 1
 
     return {
         'epoch': eid,
@@ -563,7 +559,7 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
         if args.use_lm_loss:
             lm_targets = fake_one_hot[1:fake_one_hot.size(0)]
             lm_targets = torch.argmax(lm_targets, dim=-1)
-            lm_targets = lm_targets.view(lm_targets.size(0) * lm_targets.size(1),)
+            lm_targets = lm_targets.view(lm_targets.size(0) * lm_targets.size(1), )
             lm_inputs = fake_one_hot[0:fake_one_hot.size(0) - 1]
             lm_out, hidden = lm.forward_padded(lm_inputs,
                                                hidden,
@@ -724,11 +720,12 @@ def main(args):
         model_gen = saved_dict['model_gen']
         model_disc = saved_dict['model_disc']
     else:
-        model_gen = TranslatorGeneratorModel(
-            vocab_size, args.emsize, args.msg_len, args.msg_in_mlp_layers,
-            args.msg_in_mlp_nodes, args.encoding_layers, args.dropout_transformer,
-            args.dropouti, args.dropoute, True, args.shared_encoder, args.attn_heads,
-            autoenc_model)
+        model_gen = TranslatorGeneratorModel(vocab_size, args.emsize, args.msg_len,
+                                             args.msg_in_mlp_layers,
+                                             args.msg_in_mlp_nodes, args.encoding_layers,
+                                             args.dropout_transformer, args.dropouti,
+                                             args.dropoute, True, args.shared_encoder,
+                                             args.attn_heads, autoenc_model)
         model_disc = TranslatorDiscriminatorModel(args.emsize, args.adv_encoding_layers,
                                                   args.dropout_transformer,
                                                   args.adv_attn_heads, args.dropouti)
@@ -747,11 +744,11 @@ def main(args):
         idx2word = vocab.idx2word
 
         sent_encoder = BLSTMEncoder(word2idx, idx2word, args.glove_path)
-        encoderState = torch.load(args.infersent_path)
+        encoder_state = torch.load(args.infersent_path)
         state = sent_encoder.state_dict()
-        for k in encoderState:
+        for k in encoder_state:
             if k in state:
-                state[k] = encoderState[k]
+                state[k] = encoder_state[k]
         sent_encoder.load_state_dict(state)
     else:
         sent_encoder = None
@@ -762,8 +759,8 @@ def main(args):
             pretrained_lm, _, _ = torch.load(f)
             lm = lang_model.RNNModel(args.model, vocab_size, args.emsize_lm, args.nhid,
                                      args.nlayers, args.dropout, args.dropouth,
-                                     args.dropouti_lm, args.dropoute_lm, args.wdrop,
-                                     True, pretrained_lm)
+                                     args.dropouti_lm, args.dropoute_lm, args.wdrop, True,
+                                     pretrained_lm)
         del pretrained_lm
     else:
         lm = None
@@ -782,8 +779,7 @@ def main(args):
     params_disc = model_disc.parameters()
 
     total_params = sum(x.size()[0] * x.size()[1] if len(x.size()) > 1 else x.size()[0]
-                       for x in params
-                       if x.size())
+                       for x in params if x.size())
     logger.info(f'total parameters: {total_params:,}')
 
     # construct optimizers
@@ -875,22 +871,22 @@ def main(args):
             if tot_eval_loss < stored_loss:
                 save_models(args.save, model_gen, model_disc, optimizer_gen,
                             optimizer_disc, criterion, criterion_recon)
-                logger.info('saving model (new best generator validation)')
+                logger.info('saving model (new best overall performance)')
                 stored_loss = tot_eval_loss
             if eval_res['msg_loss'] < stored_loss_msg:
                 save_models(f'{args.save}_msg', model_gen, model_disc, optimizer_gen,
                             optimizer_disc, criterion, criterion_recon)
-                print('Saving model (new best msg validation)')
+                logger.info('Saving model (new best msg validation)')
                 stored_loss_msg = eval_res['msg_loss']
             if text_eval_loss < stored_loss_text:
                 save_models(f'{args.save}_recon', model_gen, model_disc, optimizer_gen,
                             optimizer_disc, criterion, criterion_recon)
-                print('Saving model (new best reconstruct validation)')
+                logger.info('Saving model (new best reconstruct validation)')
                 stored_loss_text = text_eval_loss
             if eid % args.save_interval == 0:
                 save_models(f'{args.save}_interval', model_gen, model_disc, optimizer_gen,
                             optimizer_disc, criterion, criterion_recon)
-                print('Saving model (intervals)')
+                logger.info('Saving model (intervals)')
 
     # run on test set
     best_saved_dict = resume_models(args.save)

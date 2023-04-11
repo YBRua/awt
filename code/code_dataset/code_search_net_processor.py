@@ -20,6 +20,12 @@ class CodeSearchNetProcessor:
                 json_instances.append(json.loads(line))
         return json_instances
 
+    def _naive_token_split(self, tokens: List[str]) -> List[str]:
+        new_tokens = []
+        for t in tokens:
+            new_tokens.extend(split_name(t))
+        return new_tokens
+
     def _process_jsonl(self,
                        jsonl_file: str,
                        show_progress: bool = True,
@@ -37,9 +43,7 @@ class CodeSearchNetProcessor:
         for json_instance in progress:
             source_code = json_instance['code']
             raw_code_tokens = json_instance['code_tokens']
-            tokens = []
-            for t in raw_code_tokens:
-                tokens.extend(split_name(t))
+            tokens = self._naive_token_split(raw_code_tokens)
 
             instance = DataInstance(source_code=source_code,
                                     raw_source_tokens=raw_code_tokens,
