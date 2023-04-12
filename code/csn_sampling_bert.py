@@ -10,6 +10,7 @@ from model_mt_autoenc_cce import (
     TranslatorDiscriminatorModel,
 )
 from sentence_transformers import SentenceTransformer
+from transformers import RobertaModel, RobertaTokenizer
 
 from tqdm import tqdm
 from datetime import datetime
@@ -26,6 +27,7 @@ from code_dataset import (
     CodeSearchNetDataset,
     CodeSearchNetProcessor,
     CSNWatermarkingCollator,
+    build_dataset,
 )
 
 from typing import List
@@ -44,6 +46,7 @@ def parse_args_csn_sampling():
     parser.add_argument('--split', choices=['train', 'valid', 'test'], default='test')
     parser.add_argument('--file_ids', nargs='+', type=int, default=0)
     parser.add_argument('--dataset_subsample_num', type=int, default=-1)
+    parser.add_argument('--codebert', action='store_true')
 
     # model and training
     parser.add_argument('--seed', type=int, default=1111, help='random seed')
@@ -86,7 +89,7 @@ def parse_args_csn_sampling():
                         help='whether to use language model loss')
     parser.add_argument('--lm_ckpt',
                         type=str,
-                        default='./ckpts/WT2_lm.pt',
+                        default='csn_lm.pt',
                         help='path to the fine tuned language model')
 
     # gumbel softmax arguments
@@ -278,7 +281,9 @@ def evaluate(model_gen: TranslatorGeneratorModel,
             # text decoding
             output_text_beams = []
             word_idx_beams = []
+            lm_loss_beams = []
             for beam in range(0, args.samples_num):
+                hidden = lm.init_hidden(bsz=1)
                 # word_idx: L, B
                 word_idx = get_idx_from_logits(candidates_soft_prob[beam],
                                                data.size(0),
@@ -286,24 +291,39 @@ def evaluate(model_gen: TranslatorGeneratorModel,
                 word_idx_beams.append(word_idx)
                 output_text = ''
                 orig_text = ''
-                for k in range(0, data.size(0)):
-                    output_text += f'{vocab.get_token_by_id(word_idx[k, 0])} '
-                    orig_text += f'{vocab.get_token_by_id(data[k, 0])} '
+                if args.codebert:
+                    output_text = ' '.join(vocab.convert_ids_to_tokens(word_idx[:, 0].tolist()))
+                    orig_text = ' '.join(vocab.convert_ids_to_tokens(data[:, 0].tolist()))
+
+                else:
+                    for k in range(0, data.size(0)):
+                        output_text += f'{vocab.get_token_by_id(word_idx[k, 0])} '
+                        orig_text += f'{vocab.get_token_by_id(data[k, 0])} '
                 output_text_beams.append(output_text)
-                sentences = [output_text, orig_text]
-                sbert_embs = sbert_model.encode(sentences)
-                bert_diff[beam] = np.linalg.norm(sbert_embs[0] - sbert_embs[1])
+
+                lm_targets = word_idx[1:data.size(0)]
+                lm_targets = lm_targets.view(lm_targets.size(0) * lm_targets.size(1), )
+                lm_inputs = word_idx[0:data.size(0) - 1]
+                lm_out, hidden = lm(lm_inputs, hidden, decode=True)
+                lm_loss = criterion_lm(lm_out, lm_targets)
+                lm_loss_beams.append(lm_loss.item())
 
             # get the best beam with non-zero diff
-            best_beam_idx = -1
-            beam_argsort = np.argsort(np.asarray(bert_diff))
-            for beam in range(0, args.samples_num):
-                if bert_diff[beam_argsort[beam]] > 0:
-                    best_beam_idx = beam_argsort[beam]
-                    break
-            # if all distances are zero
-            if best_beam_idx == -1:
+            if len(lm_loss_beams) > 0:
+                beam_argsort = np.argsort(np.asarray(lm_loss_beams))
                 best_beam_idx = beam_argsort[0]
+
+            else:
+                hidden = lm.init_hidden(bsz=1)
+                lm_targets = data[1:data.size(0)]
+                lm_targets = lm_targets.view(lm_targets.size(0) * lm_targets.size(1), )
+                lm_inputs = data[0:data.size(0) - 1]
+                lm_out, hidden = lm(lm_inputs, hidden, decode=True)
+                lm_loss = criterion_lm(lm_out, lm_targets)
+                lm_loss_beams.append(lm_loss.item())
+                output_text_beams.append(orig_text)
+                word_idx_beams.append(data)
+                best_beam_idx = 0
 
             # watermark decoding
             best_beam_data = word_idx_beams[best_beam_idx]
@@ -319,6 +339,7 @@ def evaluate(model_gen: TranslatorGeneratorModel,
             fake_correct += (label == fake_out_label).float().sum().item()
             y_label.append(label.detach().cpu().numpy().astype(int)[0, 0])
             y_out.append(fake_out_label.detach().cpu().numpy().astype(int)[0, 0])
+
             # language loss
             if args.use_lm_loss:
                 lm_targets = word_idx_beams[best_beam_idx][
@@ -403,16 +424,23 @@ def main(args):
 
     # prepare data
     processor = CodeSearchNetProcessor()
-    instances = processor.process_jsonls(get_jsonl_filenames(args))
+    if args.codebert:
+        codebert_tokenizer = RobertaTokenizer.from_pretrained('microsoft/codebert-base')
+        instances = processor.process_jsonls_codebert(get_jsonl_filenames(args), codebert_tokenizer)
+    else:
+        instances = processor.process_jsonls(get_jsonl_filenames(args))
 
     if args.vocab_source == 'wikitext':
         corpus = Corpus('./data/wikitext-2')
         vocab = WikiTextVocabWrapper(corpus.dictionary)
     else:
-        _train_dataset = CodeSearchNetDataset.from_json(args.vocab_source)
-        vocab = _train_dataset.vocab
+        if args.codebert:
+            vocab = codebert_tokenizer
+        else:
+            _train_dataset = CodeSearchNetDataset.from_json(args.vocab_source)
+            vocab = _train_dataset.vocab
 
-    vocab_size = len(vocab)
+    vocab_size = 50265 if args.codebert else len(vocab)
     logger.info(f'vocab size: {vocab_size}')
 
     instances = [inst for inst in instances if len(inst.tokens) <= 120]
@@ -428,7 +456,7 @@ def main(args):
         subsampled = [instances[i] for i in subsampled_idx]
     logger.info(f'num of subsampled instances: {len(subsampled)}')
 
-    dataset = CodeSearchNetDataset(subsampled, vocab)
+    dataset = CodeSearchNetDataset(build_dataset(subsampled, vocab))
     collator = CSNWatermarkingCollator(0, args.msg_len, 512)
     dataloader = DataLoader(dataset, batch_size=1, collate_fn=collator)
 

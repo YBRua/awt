@@ -8,6 +8,7 @@ from tqdm import tqdm
 from datetime import datetime
 from argparse import ArgumentParser
 from torch.utils.data import DataLoader
+from transformers import RobertaModel, RobertaTokenizer
 
 import lang_model
 from fb_semantic_encoder import BLSTMEncoder
@@ -17,10 +18,12 @@ from model_mt_autoenc_cce import (
     TranslatorDiscriminatorModel,
 )
 from code_dataset import (
+    CodeVocab,
     DataInstance,
     CodeSearchNetDataset,
     CodeSearchNetProcessor,
     CSNWatermarkingCollator,
+    build_dataset,
 )
 
 from typing import List
@@ -37,6 +40,8 @@ def parse_args_csn_training():
     parser.add_argument('--train_subsample_num', type=int, default=0)
     parser.add_argument('--eval_subsample_num', type=int, default=0)
     parser.add_argument('--allow_cached_dataset', action='store_true')
+
+    parser.add_argument('--codebert', action='store_true')
 
     # training arguments
     parser.add_argument('--lr', type=float, default=0.00003, help='initial learning rate')
@@ -397,7 +402,7 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
 
             # generator loss
             label.fill_(REAL_LABEL_VAL)
-            loss_gen_adv = criterion(fake_out, label.float())
+            loss_gen_adv = args.gen_weight * criterion(fake_out, label.float())
 
             # semantic loss
             if args.use_semantic_loss:
@@ -405,11 +410,11 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
                 fake_sem_emb = sent_encoder.forward_encode(fake_one_hot,
                                                            lengths,
                                                            one_hot=True)
-                sem_loss = criterion_sem(orig_sem_emb, fake_sem_emb)
+                sem_loss = args.sem_weight * criterion_sem(orig_sem_emb, fake_sem_emb)
                 total_loss_sem += sem_loss.item()
 
             # msg loss of the generator
-            msg_loss = criterion(msg_out, msgs.float())
+            msg_loss = args.msg_weight * criterion(msg_out, msgs.float())
 
             # lm loss of the generator
             if args.use_lm_loss:
@@ -422,12 +427,13 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
                                                    lengths - 1,
                                                    decode=True,
                                                    one_hot=True)
-                lm_loss = criterion_lm(lm_out, lm_targets)
+                lm_loss = args.lm_weight * criterion_lm(lm_out, lm_targets)
                 total_loss_lm += lm_loss.item()
                 hidden = repackage_hidden(hidden)
 
             # reconstruction loss
-            reconst_loss = criterion_recon(fake_data_prob, token_ids.view(-1))
+            reconst_loss = args.reconst_weight * criterion_recon(
+                fake_data_prob, token_ids.view(-1))
             total_loss_reconst += reconst_loss.item()
 
             total_loss_gen += loss_gen_adv.item()
@@ -531,16 +537,17 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
         # fool discriminator to misclassify fake data as real
         label.fill_(REAL_LABEL_VAL)
         fake_out2 = model_disc(fake_data_emb, src_key_padding_mask=src_padding_mask)
-        loss_gen_adv = criterion(fake_out2, label.float())
+        loss_gen_adv = args.gen_weight * criterion(fake_out2, label.float())
 
         # decode watermark
         msg_out = model_gen.forward_msg_decode(fake_data_emb,
                                                src_key_padding_mask=src_padding_mask)
-        loss_msg = criterion(msg_out, msgs.float())
+        loss_msg = args.msg_weight * criterion(msg_out, msgs.float())
         msg_preds = torch.round(torch.sigmoid(msg_out))
         total_msg_acc += (msgs == msg_preds).float().mean().item()
         # reconstruct input sequence
-        loss_recon = criterion_reconst(fake_data_prob, token_ids.view(-1))
+        loss_recon = args.reconst_weight * criterion_reconst(fake_data_prob,
+                                                             token_ids.view(-1))
 
         if args.use_semantic_loss:
             # Compute sentence embedding #
@@ -548,13 +555,11 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
             fake_sent_emb = sent_encoder.forward_encode(fake_one_hot,
                                                         lengths,
                                                         one_hot=True)
-            loss_sem = criterion_sem(orig_sent_emb, fake_sent_emb)
-            loss_gen = (args.gen_weight * loss_gen_adv + args.msg_weight * loss_msg +
-                        args.sem_weight * loss_sem + args.reconst_weight * loss_recon)
+            loss_sem = args.sem_weight * criterion_sem(orig_sent_emb, fake_sent_emb)
+            loss_gen = (loss_gen_adv + loss_msg + loss_sem + loss_recon)
             total_loss_sem += loss_sem.item()
         else:
-            loss_gen = (args.gen_weight * loss_gen_adv + args.msg_weight * loss_msg +
-                        args.reconst_weight * loss_recon)
+            loss_gen = (loss_gen_adv + loss_msg + loss_recon)
 
         if args.use_lm_loss:
             lm_targets = fake_one_hot[1:fake_one_hot.size(0)]
@@ -566,8 +571,8 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
                                                lengths - 1,
                                                decode=True,
                                                one_hot=True)
-            lm_loss = criterion_lm(lm_out, lm_targets)
-            loss_gen = loss_gen + args.lm_weight * lm_loss
+            lm_loss = args.lm_weight * criterion_lm(lm_out, lm_targets)
+            loss_gen = loss_gen + lm_loss
             total_loss_lm += lm_loss.item()
 
         # update the generator
@@ -622,13 +627,27 @@ def main(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
+    if args.codebert:
+        roberta_tokenizer: RobertaTokenizer
+        roberta_tokenizer = RobertaTokenizer.from_pretrained('microsoft/codebert-base')
+
     # loading data
-    train_cache_path = os.path.join(args.data, args.lang,
-                                    f'train_{args.train_subsample_num}.json')
-    valid_cache_path = os.path.join(args.data, args.lang,
-                                    f'valid_{args.eval_subsample_num}.json')
-    test_cache_path = os.path.join(args.data, args.lang,
-                                   f'test_{args.eval_subsample_num}.json')
+    if args.codebert:
+        train_cache_path = os.path.join(
+            args.data, args.lang, f'train_{args.train_subsample_num}_codebert.json')
+        valid_cache_path = os.path.join(args.data, args.lang,
+                                        f'valid_{args.eval_subsample_num}_codebert.json')
+        test_cache_path = os.path.join(args.data, args.lang,
+                                       f'test_{args.eval_subsample_num}_codebert.json')
+    else:
+        vocab_cache_path = os.path.join(args.data, args.lang,
+                                        f'vocab_{args.train_subsample_num}.json')
+        train_cache_path = os.path.join(args.data, args.lang,
+                                        f'train_{args.train_subsample_num}.json')
+        valid_cache_path = os.path.join(args.data, args.lang,
+                                        f'valid_{args.eval_subsample_num}.json')
+        test_cache_path = os.path.join(args.data, args.lang,
+                                       f'test_{args.eval_subsample_num}.json')
 
     train_dataset = None
     valid_dataset = None
@@ -638,6 +657,10 @@ def main(args):
         train_dataset = CodeSearchNetDataset.from_json(train_cache_path)
         valid_dataset = CodeSearchNetDataset.from_json(valid_cache_path)
         test_dataset = CodeSearchNetDataset.from_json(test_cache_path)
+        if args.codebert:
+            vocab = roberta_tokenizer
+        else:
+            vocab = CodeVocab().load(vocab_cache_path)
 
     if any([train_dataset is None, valid_dataset is None, test_dataset is None]):
         processor = CodeSearchNetProcessor()
@@ -645,12 +668,20 @@ def main(args):
         valid_files = get_jsonl_filenames(args, 'valid', [0])
         test_files = get_jsonl_filenames(args, 'test', [0])
 
-        train_instances = processor.process_jsonls(train_files,
-                                                   instance_filter=instance_filter)
-        valid_instances = processor.process_jsonls(valid_files,
-                                                   instance_filter=instance_filter)
-        test_instances = processor.process_jsonls(test_files,
-                                                  instance_filter=instance_filter)
+        if args.codebert:
+            train_instances = processor.process_jsonls_codebert(
+                train_files, roberta_tokenizer, instance_filter=instance_filter)
+            valid_instances = processor.process_jsonls_codebert(
+                valid_files, roberta_tokenizer, instance_filter=instance_filter)
+            test_instances = processor.process_jsonls_codebert(
+                test_files, roberta_tokenizer, instance_filter=instance_filter)
+        else:
+            train_instances = processor.process_jsonls(train_files,
+                                                       instance_filter=instance_filter)
+            valid_instances = processor.process_jsonls(valid_files,
+                                                       instance_filter=instance_filter)
+            test_instances = processor.process_jsonls(test_files,
+                                                      instance_filter=instance_filter)
 
         if args.train_subsample_num > 0:
             subsampled_idx = np.random.choice(len(train_instances),
@@ -670,11 +701,14 @@ def main(args):
                                               replace=False)
             test_instances = [test_instances[i] for i in subsampled_idx]
 
-        vocab = processor.build_vocabulary_on_instances(train_instances)
+        if args.codebert:
+            vocab = roberta_tokenizer
+        else:
+            vocab = processor.build_vocabulary_on_instances(train_instances)
 
-        train_dataset = CodeSearchNetDataset(train_instances, vocab)
-        valid_dataset = CodeSearchNetDataset(valid_instances, vocab)
-        test_dataset = CodeSearchNetDataset(test_instances, vocab)
+        train_dataset = CodeSearchNetDataset(build_dataset(train_instances, vocab))
+        valid_dataset = CodeSearchNetDataset(build_dataset(valid_instances, vocab))
+        test_dataset = CodeSearchNetDataset(build_dataset(test_instances, vocab))
 
         train_dataset.dump_json(train_cache_path)
         valid_dataset.dump_json(valid_cache_path)
@@ -683,11 +717,11 @@ def main(args):
     logger.info(f'train dataset size: {len(train_dataset)}')
     logger.info(f'valid dataset size: {len(valid_dataset)}')
     logger.info(f'test dataset size: {len(test_dataset)}')
-    vocab = train_dataset.vocab
-    vocab_size = len(vocab)
+    vocab_size = 50265 if args.codebert else len(vocab)
+    pad_idx = roberta_tokenizer.pad_token_id if args.codebert else vocab.pad_idx
     logger.info(f'vocab size: {vocab_size}')
 
-    collator = CSNWatermarkingCollator(padding_idx=train_dataset.vocab.pad_idx,
+    collator = CSNWatermarkingCollator(padding_idx=pad_idx,
                                        n_bits=args.msg_len,
                                        require_masks=True)
 
@@ -726,6 +760,11 @@ def main(args):
                                              args.dropout_transformer, args.dropouti,
                                              args.dropoute, True, args.shared_encoder,
                                              args.attn_heads, autoenc_model)
+        if args.codebert:
+            codebert_model = RobertaModel.from_pretrained('microsoft/codebert-base')
+            model_gen.embeddings.load_state_dict(
+                codebert_model.embeddings.word_embeddings.state_dict())
+
         model_disc = TranslatorDiscriminatorModel(args.emsize, args.adv_encoding_layers,
                                                   args.dropout_transformer,
                                                   args.adv_attn_heads, args.dropouti)
@@ -735,8 +774,8 @@ def main(args):
 
     criterion = nn.BCEWithLogitsLoss()
     criterion_sem = nn.L1Loss()
-    criterion_lm = nn.CrossEntropyLoss(ignore_index=train_dataset.vocab.pad_idx)
-    criterion_recon = nn.CrossEntropyLoss(ignore_index=train_dataset.vocab.pad_idx)
+    criterion_lm = nn.CrossEntropyLoss(ignore_index=pad_idx)
+    criterion_recon = nn.CrossEntropyLoss(ignore_index=pad_idx)
 
     # semantic model
     if args.use_semantic_loss:

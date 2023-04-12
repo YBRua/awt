@@ -13,9 +13,8 @@ import lang_model
 from weight_drop import WeightDrop
 from split_cross import SplitCrossEntropyLoss
 from utils import batchify, get_batch, repackage_hidden
-from code_dataset.corpus_port import csn_dataset_to_corpus
-from code_dataset import (
-    CodeSearchNetDataset, )
+from code_dataset.corpus_port import csn_dataset_to_corpus, csn_dataset_to_flat_tensor
+from code_dataset import CodeSearchNetDataset, CodeVocab
 
 parser = argparse.ArgumentParser(
     description='PyTorch PennTreeBank RNN/LSTM Language Model')
@@ -24,6 +23,8 @@ parser.add_argument('--wikitext_path', type=str, default='data/wikitext-2')
 parser.add_argument('--train_source', type=str, default='train_36000.json')
 parser.add_argument('--valid_source', type=str, default='valid_8000.json')
 parser.add_argument('--test_source', type=str, default='test_8000.json')
+parser.add_argument('--vocab_source', type=str, default='vocab_36000.json')
+parser.add_argument('--codebert', action='store_true')
 parser.add_argument('--data',
                     type=str,
                     default='data/CodeSearchNet',
@@ -132,15 +133,24 @@ def model_load(fn):
         model, criterion, optimizer = torch.load(f)
 
 
-fn = 'corpus.{}.data'.format(hashlib.md5(args.data.encode()).hexdigest())
+if args.codebert:
+    fn = 'corpus.{}.codebert.data'.format(hashlib.md5(args.data.encode()).hexdigest())
+else:
+    fn = 'corpus.{}.data'.format(hashlib.md5(args.data.encode()).hexdigest())
+
 if os.path.exists(fn):
     print('Loading cached dataset...')
     corpus = torch.load(fn)
 else:
+    eval_batch_size = 10
+    test_batch_size = 1
     print('Producing dataset...')
     if args.use_wikitext:
         print('Using wikitext dataset')
         corpus = data.Corpus(args.wikitext_path)
+        train_data = batchify(corpus.train, args.batch_size, args)
+        val_data = batchify(corpus.valid, eval_batch_size, args)
+        test_data = batchify(corpus.test, test_batch_size, args)
     else:
         print('Using CodeSearchNet dataset')
         source_dir = os.path.join(args.data, args.lang)
@@ -150,14 +160,19 @@ else:
             os.path.join(source_dir, args.valid_source))
         test_dataset = CodeSearchNetDataset.from_json(
             os.path.join(source_dir, args.test_source))
-        corpus = csn_dataset_to_corpus(train_dataset, valid_dataset, test_dataset)
-        torch.save(corpus, fn)
 
-eval_batch_size = 10
-test_batch_size = 1
-train_data = batchify(corpus.train, args.batch_size, args)
-val_data = batchify(corpus.valid, eval_batch_size, args)
-test_data = batchify(corpus.test, test_batch_size, args)
+        if args.codebert:
+            train_data = batchify(csn_dataset_to_flat_tensor(train_dataset),
+                                  args.batch_size, args)
+            val_data = batchify(csn_dataset_to_flat_tensor(valid_dataset),
+                                eval_batch_size, args)
+            test_data = batchify(csn_dataset_to_flat_tensor(test_dataset),
+                                 test_batch_size, args)
+        else:
+            vocab = CodeVocab().load(os.path.join(source_dir, args.vocab_source))
+            corpus = csn_dataset_to_corpus(train_dataset, valid_dataset, test_dataset,
+                                           vocab)
+            torch.save(corpus, fn)
 
 ###############################################################################
 # Build the model
@@ -165,7 +180,7 @@ test_data = batchify(corpus.test, test_batch_size, args)
 
 criterion = None
 
-ntokens = len(corpus.dictionary)
+ntokens = 50265 if args.codebert else len(corpus.dictionary)
 model = lang_model.RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers,
                             args.dropout, args.dropouth, args.dropouti, args.dropoute,
                             args.wdrop, args.tied)

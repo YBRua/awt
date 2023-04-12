@@ -224,10 +224,10 @@ class RNNModel(nn.Module):
 
             for i in range(self.nlayers):
                 self.rnns[i].weight_hh_l0.data = copy.deepcopy(
-                    model.rnns[i].module.weight_hh_l0.data)
+                    model.rnns[i].weight_hh_l0.data)
                 self.rnns[i].weight_ih_l0.data = copy.deepcopy(
-                    model.rnns[i].module.weight_ih_l0.data)
+                    model.rnns[i].weight_ih_l0.data)
                 self.rnns[i].bias_hh_l0.data = copy.deepcopy(
-                    model.rnns[i].module.bias_hh_l0.data)
+                    model.rnns[i].bias_hh_l0.data)
                 self.rnns[i].bias_ih_l0.data = copy.deepcopy(
-                    model.rnns[i].module.bias_ih_l0.data)
+                    model.rnns[i].bias_ih_l0.data)

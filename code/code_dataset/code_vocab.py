@@ -113,3 +113,5 @@ class CodeVocab:
         self.idx2word = serialized['idx2word']
         self.word2idx = serialized['word2idx']
         self.word_freq = serialized['word_freq']
+        
+        return self
