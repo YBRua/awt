@@ -406,10 +406,23 @@ def evaluate(eid: int, model_gen: TranslatorGeneratorModel,
 
             # semantic loss
             if args.use_semantic_loss:
-                orig_sem_emb = sent_encoder.forward_encode(token_ids, lengths)
-                fake_sem_emb = sent_encoder.forward_encode(fake_one_hot,
-                                                           lengths,
-                                                           one_hot=True)
+                if args.codebert:
+                    cb_attn_mask = 1 - src_padding_mask.long()
+                    orig_sem_emb = sent_encoder(
+                        token_ids.permute(1,
+                                          0), attention_mask=cb_attn_mask).pooler_output
+                    L, B, V = fake_one_hot.shape
+                    fake_input_emb = fake_one_hot.view(L * B, V)\
+                        .mm(sent_encoder.embeddings.word_embeddings.weight)\
+                        .view(L, B, -1).permute(1, 0, 2)
+                    fake_sem_emb = sent_encoder(
+                        inputs_embeds=fake_input_emb,
+                        attention_mask=cb_attn_mask).pooler_output
+                else:
+                    orig_sem_emb = sent_encoder.forward_encode(token_ids, lengths)
+                    fake_sem_emb = sent_encoder.forward_encode(fake_one_hot,
+                                                               lengths,
+                                                               one_hot=True)
                 sem_loss = args.sem_weight * criterion_sem(orig_sem_emb, fake_sem_emb)
                 total_loss_sem += sem_loss.item()
 
@@ -551,10 +564,21 @@ def train(eid: int, model_gen: TranslatorGeneratorModel,
 
         if args.use_semantic_loss:
             # Compute sentence embedding #
-            orig_sent_emb = sent_encoder.forward_encode(token_ids, lengths)
-            fake_sent_emb = sent_encoder.forward_encode(fake_one_hot,
-                                                        lengths,
-                                                        one_hot=True)
+            if args.codebert:
+                cb_attn_mask = 1 - src_padding_mask.long()
+                orig_sent_emb = sent_encoder(token_ids.permute(1, 0),
+                                             attention_mask=cb_attn_mask).pooler_output
+                L, B, V = fake_one_hot.shape
+                fake_input_emb = fake_one_hot.view(L * B, V)\
+                    .mm(sent_encoder.embeddings.word_embeddings.weight)\
+                    .view(L, B, -1).permute(1, 0, 2)
+                fake_sent_emb = sent_encoder(inputs_embeds=fake_input_emb,
+                                             attention_mask=cb_attn_mask).pooler_output
+            else:
+                orig_sent_emb = sent_encoder.forward_encode(token_ids, lengths)
+                fake_sent_emb = sent_encoder.forward_encode(fake_one_hot,
+                                                            lengths,
+                                                            one_hot=True)
             loss_sem = args.sem_weight * criterion_sem(orig_sent_emb, fake_sent_emb)
             loss_gen = (loss_gen_adv + loss_msg + loss_sem + loss_recon)
             total_loss_sem += loss_sem.item()
@@ -779,16 +803,19 @@ def main(args):
 
     # semantic model
     if args.use_semantic_loss:
-        word2idx = vocab.word2idx
-        idx2word = vocab.idx2word
+        if args.codebert:
+            sent_encoder = RobertaModel.from_pretrained('microsoft/codebert-base')
+        else:
+            word2idx = vocab.word2idx
+            idx2word = vocab.idx2word
 
-        sent_encoder = BLSTMEncoder(word2idx, idx2word, args.glove_path)
-        encoder_state = torch.load(args.infersent_path)
-        state = sent_encoder.state_dict()
-        for k in encoder_state:
-            if k in state:
-                state[k] = encoder_state[k]
-        sent_encoder.load_state_dict(state)
+            sent_encoder = BLSTMEncoder(word2idx, idx2word, args.glove_path)
+            encoder_state = torch.load(args.infersent_path)
+            state = sent_encoder.state_dict()
+            for k in encoder_state:
+                if k in state:
+                    state[k] = encoder_state[k]
+            sent_encoder.load_state_dict(state)
     else:
         sent_encoder = None
 

@@ -292,8 +292,8 @@ def evaluate(model_gen: TranslatorGeneratorModel,
                 output_text = ''
                 orig_text = ''
                 if args.codebert:
-                    output_text = ' '.join(vocab.convert_ids_to_tokens(word_idx[:, 0].tolist()))
-                    orig_text = ' '.join(vocab.convert_ids_to_tokens(data[:, 0].tolist()))
+                    output_text = vocab.convert_tokens_to_string(vocab.convert_ids_to_tokens(word_idx[:, 0].tolist()))
+                    orig_text = vocab.convert_tokens_to_string(vocab.convert_ids_to_tokens(data[:, 0].tolist()))
 
                 else:
                     for k in range(0, data.size(0)):

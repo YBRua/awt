@@ -1,11 +1,13 @@
 conda activate torch112
-CUDA_VISIBLE_DEVICES=1 python csn_main_train.py \
+CUDA_VISIBLE_DEVICES=7 python csn_main_train.py \
+ --codebert \
+ --emsize 768 \
  --msg_len 4 \
  --data data/CodeSearchNet \
  --lang java \
  --batch_size 80  \
  --epochs 200 \
- --save csn_java_noft \
+ --save csn_java_cb_noft \
  --optimizer adam \
  --use_reconst_loss \
  --discr_interval 1 \
