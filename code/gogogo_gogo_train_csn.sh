@@ -1,5 +1,5 @@
 conda activate torch112
-CUDA_VISIBLE_DEVICES=7 python csn_main_train.py \
+CUDA_VISIBLE_DEVICES=3 python csn_main_train.py \
  --codebert \
  --emsize 768 \
  --msg_len 4 \
