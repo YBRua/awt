@@ -750,15 +750,15 @@ def main(args):
                                        require_masks=True)
 
     train_loader = DataLoader(train_dataset,
-                              batch_size=80,
+                              batch_size=args.batch_size,
                               shuffle=True,
                               collate_fn=collator)
     valid_loader = DataLoader(valid_dataset,
-                              batch_size=80,
+                              batch_size=args.batch_size,
                               shuffle=False,
                               collate_fn=collator)
     test_loader = DataLoader(test_dataset,
-                             batch_size=80,
+                             batch_size=args.batch_size,
                              shuffle=False,
                              collate_fn=collator)
 
