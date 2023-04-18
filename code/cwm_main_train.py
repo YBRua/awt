@@ -834,7 +834,7 @@ def main(args):
             #     save_models(f'{args.save}_recon', model_gen, model_disc, optimizer_gen,
             #                 optimizer_disc, criterion, criterion_recon)
             #     logger.info('Saving model (new best reconstruct validation)')
-                stored_loss_text = text_eval_loss
+            #     stored_loss_text = text_eval_loss
             if eid % args.save_interval == 0:
                 save_models(f'{args.save}_interval', model_gen, model_disc, optimizer_gen,
                             optimizer_disc, criterion, criterion_recon)

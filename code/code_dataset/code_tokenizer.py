@@ -1,6 +1,8 @@
 import re
 
 from typing import List
+from sctokenizer import CppTokenizer, JavaTokenizer
+from sctokenizer import Token, TokenType
 
 
 def sanitize_name(name):
@@ -47,3 +49,39 @@ def split_identifier(c_token: str) -> List[str]:
         return res
     else:
         return split_name(c_token)
+
+
+class CodeTokenizer:
+
+    def __init__(self, lang: str = 'c'):
+        self.lang = lang
+        if lang in ('c', 'cpp'):
+            self.tokenizer = CppTokenizer()
+        elif lang == 'java':
+            self.tokenizer = JavaTokenizer()
+        else:
+            raise ValueError('Language must be either "c" or "java"')
+
+    def _tokens_postprocess(self, tokens: List[Token]):
+        res = []
+        for token in tokens:
+            if token.token_type == TokenType.COMMENT_SYMBOL:
+                raise RuntimeError('No comment allowed!')
+            if token.token_type == TokenType.STRING:
+                # res.extend(split_string_literal(token.token_value))
+                res.append('__string__')
+            elif token.token_type == TokenType.CONSTANT:
+                res.append('__constant__')
+            elif token.token_type == TokenType.IDENTIFIER:
+                res.extend(split_identifier(token.token_value))
+            elif len(token.token_value) > 40:
+                # the tokenizer is sometimes buggy
+                # skip extremely long 'token's
+                res.append('<unk>')
+            else:
+                res.append(token.token_value)
+        return res
+
+    def get_tokens(self, source: str):
+        code_tokens = self.tokenizer.tokenize(source)
+        return code_tokens, self._tokens_postprocess(code_tokens)

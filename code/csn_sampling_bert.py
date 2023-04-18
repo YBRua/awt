@@ -30,6 +30,9 @@ from code_dataset import (
 
 from typing import List
 
+# XXX: nasty global var here!!!!
+filtered_to_orig_idx = []
+
 
 def parse_args_csn_sampling():
     parser = ArgumentParser()
@@ -346,6 +349,7 @@ def evaluate(model_gen: TranslatorGeneratorModel,
                 logger.info(f'correct bits: {int(correct_bits)}')
                 logger.info(f'bert diff: {bert_diff[best_beam_idx]:.4f}')
                 logger.info('-' * 90)
+                logger.info(f'[ORIGINAL_ID]: {filtered_to_orig_idx[batch_count]}')
                 logger.info(f'[ORIGINAL] {orig_text}')
                 logger.info(f'[MODIFIED] {output_text_beams[best_beam_idx]}')
                 logger.info('=' * 90)
@@ -418,7 +422,14 @@ def main(args):
     vocab_size = len(vocab)
     logger.info(f'vocab size: {vocab_size}')
 
-    instances = [inst for inst in instances if len(inst.tokens) <= 120]
+    # instances = [inst for inst in instances if len(inst.tokens) <= 120]
+    filtered_instances = []
+    for i, instance in enumerate(instances):
+        if len(instance.tokens) <= 120:
+            filtered_instances.append(instance)
+            filtered_to_orig_idx.append(i)
+    instances = filtered_instances
+
     logger.info(f'num of filtered instances: {len(instances)}')
 
     # random subsample for testing

@@ -2,8 +2,10 @@ import torch
 from typing import List
 from data import Dictionary, Corpus
 
+from .code_vocab import CodeVocab
 from .data_instance import DataInstance
 from .code_search_net_dataset import CodeSearchNetDataset
+from .cwm_dataset import CodeWatermarkDataset
 
 
 def _instances_to_token_ids(instances: List[DataInstance], dictionary: Dictionary):
@@ -14,6 +16,21 @@ def _instances_to_token_ids(instances: List[DataInstance], dictionary: Dictionar
             for word in instance.tokens
         ])
     return torch.tensor(token_ids, dtype=torch.long)
+
+
+def cwm_dataset_to_corpus(train_dataset: CodeWatermarkDataset,
+                          test_dataset: CodeWatermarkDataset, vocab: CodeVocab):
+    corpus = Corpus()
+    corpus.dictionary.word2idx = vocab.word2idx
+    corpus.dictionary.idx2word = vocab.idx2word
+    corpus.dictionary.word_freq = vocab.word_freq
+    corpus.dictionary.total = sum(vocab.word_freq.values())
+
+    corpus.train = _instances_to_token_ids(train_dataset.instances, corpus.dictionary)
+    corpus.valid = None
+    corpus.test = _instances_to_token_ids(test_dataset.instances, corpus.dictionary)
+
+    return corpus
 
 
 def csn_dataset_to_corpus(train_dataset: CodeSearchNetDataset,

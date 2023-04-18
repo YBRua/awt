@@ -292,8 +292,10 @@ def evaluate(model_gen: TranslatorGeneratorModel,
                 output_text = ''
                 orig_text = ''
                 if args.codebert:
-                    output_text = vocab.convert_tokens_to_string(vocab.convert_ids_to_tokens(word_idx[:, 0].tolist()))
-                    orig_text = vocab.convert_tokens_to_string(vocab.convert_ids_to_tokens(data[:, 0].tolist()))
+                    output_text = vocab.convert_tokens_to_string(
+                        vocab.convert_ids_to_tokens(word_idx[:, 0].tolist()))
+                    orig_text = vocab.convert_tokens_to_string(
+                        vocab.convert_ids_to_tokens(data[:, 0].tolist()))
 
                 else:
                     for k in range(0, data.size(0)):
@@ -426,9 +428,12 @@ def main(args):
     processor = CodeSearchNetProcessor()
     if args.codebert:
         codebert_tokenizer = RobertaTokenizer.from_pretrained('microsoft/codebert-base')
-        instances = processor.process_jsonls_codebert(get_jsonl_filenames(args), codebert_tokenizer)
+        instances = processor.process_jsonls_codebert(get_jsonl_filenames(args),
+                                                      codebert_tokenizer)
     else:
-        instances = processor.process_jsonls(get_jsonl_filenames(args))
+        # instances = processor.process_jsonls(get_jsonl_filenames(args))
+        instances = processor.process_jsonls(
+            os.path.join(args.data, args.lang, f'{args.split}.jsonl'))
 
     if args.vocab_source == 'wikitext':
         corpus = Corpus('./data/wikitext-2')

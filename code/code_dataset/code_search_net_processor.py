@@ -65,7 +65,7 @@ class CodeSearchNetProcessor:
 
         return instances
 
-    def build_vocabulary_on_instances(self, instances: List[DataInstance]) -> None:
+    def build_vocabulary_on_instances(self, instances: List[DataInstance]) -> CodeVocab:
         vocab = CodeVocab()
         for instance in instances:
             for tok in instance.tokens:
