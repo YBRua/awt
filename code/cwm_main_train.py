@@ -751,24 +751,7 @@ def main(args):
                        for x in params if x.size())
     logger.info(f'total parameters: {total_params:,}')
 
-    # construct optimizers
-    # if args.resume:
-    #     optimizer_gen = saved_dict['optimizer_gen']
-    #     optimizer_disc = saved_dict['optimizer_disc']
-    #     if args.scheduler:
-    #         optimizer_gen.param_groups[0]['lr'] = scheduler_gen.get_lr()
-    #         optimizer_disc.param_groups[0]['lr'] = scheduler_disc.get_lr()
-    #     else:
-    #         optimizer_gen.param_groups[0]['lr'] = args.lr
-    #         optimizer_disc.param_groups[0]['lr'] = args.lr
-    # else:
     if args.optimizer == 'sgd':
-        # optimizer_gen = torch.optim.SGD(params_gen,
-        #                                 lr=args.lr,
-        #                                 weight_decay=args.wdecay)
-        # optimizer_disc = torch.optim.SGD(params_disc,
-        #                                  lr=args.lr,
-        #                                  weight_decay=args.wdecay)
         raise NotImplementedError('sgd not implemented yet')
     elif args.optimizer == 'adam':
         optimizer_gen = torch.optim.Adam(
@@ -842,15 +825,15 @@ def main(args):
                             optimizer_disc, criterion, criterion_recon)
                 logger.info('saving model (new best overall performance)')
                 stored_loss = tot_eval_loss
-            if eval_res['msg_loss'] < stored_loss_msg:
-                save_models(f'{args.save}_msg', model_gen, model_disc, optimizer_gen,
-                            optimizer_disc, criterion, criterion_recon)
-                logger.info('Saving model (new best msg validation)')
-                stored_loss_msg = eval_res['msg_loss']
-            if text_eval_loss < stored_loss_text:
-                save_models(f'{args.save}_recon', model_gen, model_disc, optimizer_gen,
-                            optimizer_disc, criterion, criterion_recon)
-                logger.info('Saving model (new best reconstruct validation)')
+            # if eval_res['msg_loss'] < stored_loss_msg:
+            #     save_models(f'{args.save}_msg', model_gen, model_disc, optimizer_gen,
+            #                 optimizer_disc, criterion, criterion_recon)
+            #     logger.info('Saving model (new best msg validation)')
+            #     stored_loss_msg = eval_res['msg_loss']
+            # if text_eval_loss < stored_loss_text:
+            #     save_models(f'{args.save}_recon', model_gen, model_disc, optimizer_gen,
+            #                 optimizer_disc, criterion, criterion_recon)
+            #     logger.info('Saving model (new best reconstruct validation)')
                 stored_loss_text = text_eval_loss
             if eid % args.save_interval == 0:
                 save_models(f'{args.save}_interval', model_gen, model_disc, optimizer_gen,
