@@ -18,17 +18,17 @@ def _instances_to_token_ids(instances: List[DataInstance], dictionary: Dictionar
     return torch.tensor(token_ids, dtype=torch.long)
 
 
-def cwm_dataset_to_corpus(train_dataset: CodeWatermarkDataset,
-                          test_dataset: CodeWatermarkDataset, vocab: CodeVocab):
+def cwm_dataset_to_corpus(train_dataset: List[DataInstance],
+                          test_dataset: List[DataInstance], vocab: CodeVocab):
     corpus = Corpus()
     corpus.dictionary.word2idx = vocab.word2idx
     corpus.dictionary.idx2word = vocab.idx2word
     corpus.dictionary.word_freq = vocab.word_freq
     corpus.dictionary.total = sum(vocab.word_freq.values())
 
-    corpus.train = _instances_to_token_ids(train_dataset.instances, corpus.dictionary)
+    corpus.train = _instances_to_token_ids(train_dataset, corpus.dictionary)
     corpus.valid = None
-    corpus.test = _instances_to_token_ids(test_dataset.instances, corpus.dictionary)
+    corpus.test = _instances_to_token_ids(test_dataset, corpus.dictionary)
 
     return corpus
 

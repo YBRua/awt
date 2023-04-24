@@ -7,14 +7,13 @@ import hashlib
 import argparse
 import numpy as np
 
-import data
 import lang_model
 
 from weight_drop import WeightDrop
 from split_cross import SplitCrossEntropyLoss
 from utils import batchify, get_batch, repackage_hidden
-from code_dataset.corpus_port import cwm_dataset_to_corpus, cwm_dataset_to_flat_tensor
-from code_dataset import CodeWatermarkProcessor, CodeWatermarkDataset, CodeVocab
+from code_dataset.corpus_port import cwm_dataset_to_corpus
+from code_dataset import CodeWatermarkProcessor
 
 parser = argparse.ArgumentParser(
     description='PyTorch PennTreeBank RNN/LSTM Language Model')
@@ -135,20 +134,20 @@ def model_load(fn):
 
 eval_batch_size = 10
 test_batch_size = 1
-fn = 'corpus.{}.data'.format(hashlib.md5(args.data.encode()).hexdigest())
-if os.path.exists(fn):
-    print('Loading cached dataset...')
-    corpus = torch.load(fn)
-else:
-    print('Producing dataset...')
-    print(f'Using {args.data}')
-    processor = CodeWatermarkProcessor(lang=args.lang)
-    instances = processor.load_nested_dir(args.data)
-    train_instances, test_instances = processor.train_test_split_by_proportion(
-        instances, train_proportion=0.9, seed=0)
-    vocab = processor.build_vocab(train_instances)
-    corpus = cwm_dataset_to_corpus(train_instances, test_instances, vocab)
-    torch.save(corpus, fn)
+# fn = 'corpus.{}.data'.format(hashlib.md5(args.data.encode()).hexdigest())
+# if os.path.exists(fn):
+#     print('Loading cached dataset...')
+#     corpus = torch.load(fn)
+# else:
+print('Producing dataset...')
+print(f'Using {args.data}')
+processor = CodeWatermarkProcessor(lang=args.lang)
+instances = processor.load_nested_dir(args.data)
+train_instances, test_instances = processor.train_test_split_by_proportion(
+    instances, train_proportion=0.9, seed=0)
+vocab = processor.build_vocab(train_instances)
+corpus = cwm_dataset_to_corpus(train_instances, test_instances, vocab)
+    # torch.save(corpus, fn)
 
 train_data = batchify(corpus.train, args.batch_size, args)
 test_data = batchify(corpus.test, test_batch_size, args)

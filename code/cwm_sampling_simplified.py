@@ -4,6 +4,9 @@ import logging
 import numpy as np
 import torch.nn as nn
 
+from tree_sitter import Parser, Language
+from grammar_check import check_tree_validity
+
 import lang_model
 from model_mt_autoenc_cce import (
     TranslatorGeneratorModel,
@@ -206,13 +209,16 @@ def compare_msg_bits(msgs, msg_out):
 
 
 def evaluate(model_gen: TranslatorGeneratorModel,
-             model_disc: TranslatorDiscriminatorModel, dataloader: DataLoader,
-             vocab: CodeVocab, device: torch.device, logger: logging.Logger, args):
+             model_disc: TranslatorDiscriminatorModel, lm: lang_model.RNNModel,
+             sbert_model: SentenceTransformer, dataloader: DataLoader, vocab: CodeVocab,
+             device: torch.device, logger: logging.Logger, args):
     REAL_LABEL_VAL = 1
     FAKE_LABEL_VAL = 0
 
     model_gen.eval()
     model_disc.eval()
+    sbert_model.eval()
+    lm.eval()
 
     total_loss_lm = 0
     tot_count = 0
@@ -233,6 +239,7 @@ def evaluate(model_gen: TranslatorGeneratorModel,
     y_out = []
     y_label = []
 
+    criterion_lm = nn.CrossEntropyLoss()
     for bid, batch in enumerate(tqdm(dataloader)):
         data, lengths, msgs = batch
         data = data.to(device)
@@ -240,6 +247,9 @@ def evaluate(model_gen: TranslatorGeneratorModel,
 
         long_msg[:, long_msg_count * args.msg_len:long_msg_count * args.msg_len +
                  args.msg_len] = msgs
+
+        if args.use_lm_loss:
+            hidden = lm.init_hidden(bsz=1)
 
         with torch.no_grad():
             # watermark encoding
@@ -279,20 +289,24 @@ def evaluate(model_gen: TranslatorGeneratorModel,
                 word_idx_beams.append(word_idx)
                 output_text = ''
                 orig_text = ''
-                if args.codebert:
-                    output_text = vocab.convert_tokens_to_string(
-                        vocab.convert_ids_to_tokens(word_idx[:, 0].tolist()))
-                    orig_text = vocab.convert_tokens_to_string(
-                        vocab.convert_ids_to_tokens(data[:, 0].tolist()))
-
-                else:
-                    for k in range(0, data.size(0)):
-                        output_text += f'{vocab.get_token_by_id(word_idx[k, 0])} '
-                        orig_text += f'{vocab.get_token_by_id(data[k, 0])} '
+                for k in range(0, data.size(0)):
+                    output_text += f'{vocab.get_token_by_id(word_idx[k, 0])} '
+                    orig_text += f'{vocab.get_token_by_id(data[k, 0])} '
                 output_text_beams.append(output_text)
+                sentences = [output_text, orig_text]
+                sbert_embs = sbert_model.encode(sentences)
+                bert_diff[beam] = np.linalg.norm(sbert_embs[0] - sbert_embs[1])
 
             # get the best beam with non-zero diff
-            best_beam_idx = 0
+            best_beam_idx = -1
+            beam_argsort = np.argsort(np.asarray(bert_diff))
+            for beam in range(0, args.samples_num):
+                if bert_diff[beam_argsort[beam]] > 0:
+                    best_beam_idx = beam_argsort[beam]
+                    break
+            # if all distances are zero
+            if best_beam_idx == -1:
+                best_beam_idx = beam_argsort[0]
 
             # watermark decoding
             best_beam_data = word_idx_beams[best_beam_idx]
@@ -308,24 +322,43 @@ def evaluate(model_gen: TranslatorGeneratorModel,
             fake_correct += (label == fake_out_label).float().sum().item()
             y_label.append(label.detach().cpu().numpy().astype(int)[0, 0])
             y_out.append(fake_out_label.detach().cpu().numpy().astype(int)[0, 0])
+            # language loss
+            if args.use_lm_loss:
+                lm_targets = word_idx_beams[best_beam_idx][
+                    1:candidates_one_hot[best_beam_idx].size(0)]
+                lm_targets = lm_targets.view(lm_targets.size(0) * lm_targets.size(1), )
+                lm_inputs = word_idx_beams[best_beam_idx][
+                    0:candidates_one_hot[best_beam_idx].size(0) - 1]
+                lm_out, hidden = lm(lm_inputs, hidden, decode=True)
+                lm_loss = criterion_lm(lm_out, lm_targets)
+                total_loss_lm += lm_loss.data
+                hidden = repackage_hidden(hidden)
 
-            long_msg_out[:, long_msg_count * args.msg_len:long_msg_count * args.msg_len +
-                         args.msg_len] = msg_out
-            l2_distances = l2_distances + bert_diff[best_beam_idx]
-            # meteor_tot = meteor_tot + meteor_beams[best_beam_idx]
-            logger.info('=' * 90)
-            logger.info(f'sample #{batch_count}')
-            logger.info('-' * 90)
-            logger.info(f'gt  msg: {msgs.tolist()}')
-            logger.info(f'dec msg: {torch.round(torch.sigmoid(msg_out)).tolist()}')
-            correct_bits = compare_msg_bits(msgs, torch.round(torch.sigmoid(msg_out)))
-            logger.info(f'correct bits: {int(correct_bits)}')
-            logger.info(f'bert diff: {bert_diff[best_beam_idx]:.4f}')
-            logger.info('-' * 90)
-            logger.info(f'[ORIGINAL] {orig_text}')
-            logger.info(f'[MODIFIED] {output_text_beams[best_beam_idx]}')
-            logger.info('=' * 90)
-
+            if bert_diff[best_beam_idx] < args.bert_threshold:
+                long_msg_out[:,
+                             long_msg_count * args.msg_len:long_msg_count * args.msg_len +
+                             args.msg_len] = msg_out
+                l2_distances = l2_distances + bert_diff[best_beam_idx]
+                # meteor_tot = meteor_tot + meteor_beams[best_beam_idx]
+                logger.info('=' * 90)
+                logger.info(f'sample #{batch_count}')
+                logger.info('-' * 90)
+                logger.info(f'gt  msg: {msgs.tolist()}')
+                logger.info(f'dec msg: {torch.round(torch.sigmoid(msg_out)).tolist()}')
+                correct_bits = compare_msg_bits(msgs, torch.round(torch.sigmoid(msg_out)))
+                logger.info(f'correct bits: {int(correct_bits)}')
+                logger.info(f'bert diff: {bert_diff[best_beam_idx]:.4f}')
+                logger.info('-' * 90)
+                logger.info(f'[ORIGINAL] {orig_text}')
+                logger.info(f'[MODIFIED] {output_text_beams[best_beam_idx]}')
+                logger.info('=' * 90)
+            else:
+                # meteor_pair = 1
+                # meteor_tot = meteor_tot + meteor_pair
+                msg_out_random = model_gen.forward_msg_decode(data_emb)
+                long_msg_out[:,
+                             long_msg_count * args.msg_len:long_msg_count * args.msg_len +
+                             args.msg_len] = msg_out_random
         if ((batch_count != 0 and (batch_count + 1) % args.msgs_segment == 0)
                 or args.msgs_segment == 1):
             long_msg_count = 0
@@ -369,6 +402,12 @@ def main(args):
     logger = setup_logger_cwm_simplified_eval()
     logger.info(args)
 
+    MAX_DEPTH = -1
+    PARSER_LANG = Language('/home/borui/code-watermarking/metrics/parser/languages.so',
+                           args.lang)
+    parser = Parser()
+    parser.set_language(PARSER_LANG)
+
     device = torch.device('cuda')
 
     # prepare data
@@ -382,9 +421,17 @@ def main(args):
     vocab_size = len(vocab)
     logger.info(f'vocab size: {vocab_size}')
 
-    dataset = processor.build_dataset(test_instances, vocab)
+    actual_test_instances = []
+    for test_instance in test_instances:
+        tree = parser.parse(bytes(test_instance.source_code, 'utf-8'))
+        if check_tree_validity(tree.root_node, MAX_DEPTH):
+            actual_test_instances.append(test_instance)
+    
+    print(len(actual_test_instances))
+
+    dataset = processor.build_dataset(actual_test_instances, vocab)
     collator = CSNWatermarkingCollator(0, args.msg_len, 512)
-    dataloader = DataLoader(dataset, batch_size=1, collate_fn=collator)
+    dataloader = DataLoader(dataset, batch_size=1, collate_fn=collator, shuffle=False)
 
     # Load the best saved model.
     with open(args.gen_path, 'rb') as f:
@@ -394,10 +441,33 @@ def main(args):
         model_disc: TranslatorDiscriminatorModel
         model_disc, _, _, _ = torch.load(f)
 
+    sbert_model = SentenceTransformer('bert-base-nli-mean-tokens')
+
+    if args.use_lm_loss:
+        with open(args.lm_ckpt, 'rb') as f:
+            pretrained_lm, _, _ = torch.load(f, map_location='cpu')
+            lm = lang_model.RNNModel(args.model,
+                                     vocab_size,
+                                     args.emsize_lm,
+                                     args.nhid,
+                                     args.nlayers,
+                                     args.dropout,
+                                     args.dropouth,
+                                     args.dropouti_lm,
+                                     args.dropoute_lm,
+                                     args.wdrop,
+                                     tie_weights=True,
+                                     loaded_model=pretrained_lm)
+    else:
+        lm = None
+
     model_gen.to(device)
     model_disc.to(device)
+    sbert_model.to(device)
+    lm.to(device)
 
-    res = evaluate(model_gen, model_disc, dataloader, vocab, device, logger, args)
+    res = evaluate(model_gen, model_disc, lm, sbert_model, dataloader, vocab, device,
+                   logger, args)
 
     res_str = prettify_res_dict(res, prefix=f'| {args.lang}-{args.split} ')
     logger.info(res_str)

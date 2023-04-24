@@ -22,6 +22,12 @@ def split_name(c_token: str) -> List[str]:
     return res
 
 
+def _add_special_token(splitted: List[str]):
+    res = [splitted[0]]
+    for tok in splitted[1:]:
+        res.append(f'')
+
+
 def _try_split_snake(c_token: str) -> List[str]:
     words = c_token.split('_')
     res = ['_'] * (len(words) * 2 - 1)
@@ -52,7 +58,6 @@ def split_identifier(c_token: str) -> List[str]:
 
 
 class CodeTokenizer:
-
     def __init__(self, lang: str = 'c'):
         self.lang = lang
         if lang in ('c', 'cpp'):
