@@ -408,8 +408,9 @@ def main(args):
     # prepare data
     processor = CodeSearchNetProcessor()
     # instances = processor.process_jsonls(get_jsonl_filenames(args))
-    load_path = os.path.join(args.data, args.lang, f'{args.split}.jsonl')
-    instances = processor.process_jsonls([load_path])
+    base_dir = '/home/liwei/csy/Code-Text/code-to-text/dataset/java'
+    test_files = os.path.join(base_dir, 'test.jsonl')
+    instances = processor.process_jsonls([test_files])
     logger.info(f'num of total instances: {len(instances)}')
 
     if args.vocab_source == 'wikitext':
@@ -418,6 +419,7 @@ def main(args):
     else:
         _train_dataset = CodeSearchNetDataset.from_json(args.vocab_source)
         vocab = _train_dataset.vocab
+        logger.info(f'Loaded train instances: {len(_train_dataset)}')
 
     vocab_size = len(vocab)
     logger.info(f'vocab size: {vocab_size}')
@@ -425,7 +427,7 @@ def main(args):
     # instances = [inst for inst in instances if len(inst.tokens) <= 120]
     filtered_instances = []
     for i, instance in enumerate(instances):
-        if len(instance.tokens) <= 120:
+        if len(instance.tokens) <= 128:
             filtered_instances.append(instance)
             filtered_to_orig_idx.append(i)
     instances = filtered_instances

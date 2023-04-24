@@ -327,7 +327,7 @@ class LRScheduler:
 
 
 def instance_filter(instance: DataInstance):
-    return len(instance.tokens) <= 85
+    return len(instance.tokens) <= 128
 
 
 REAL_LABEL_VAL = 1
@@ -641,15 +641,19 @@ def main(args):
 
     if any([train_dataset is None, valid_dataset is None, test_dataset is None]):
         processor = CodeSearchNetProcessor()
-        train_files = get_jsonl_filenames(args, 'train', list(range(16)))
-        valid_files = get_jsonl_filenames(args, 'valid', [0])
-        test_files = get_jsonl_filenames(args, 'test', [0])
+        base_dir = '/home/liwei/csy/Code-Text/code-to-text/dataset/java'
+        train_files = os.path.join(base_dir, 'train.jsonl')
+        valid_files = os.path.join(base_dir, 'valid.jsonl')
+        test_files = os.path.join(base_dir, 'test.jsonl')
+        # train_files = get_jsonl_filenames(args, 'train', list(range(16)))
+        # valid_files = get_jsonl_filenames(args, 'valid', [0])
+        # test_files = get_jsonl_filenames(args, 'test', [0])
 
-        train_instances = processor.process_jsonls(train_files,
+        train_instances = processor.process_jsonls([train_files],
                                                    instance_filter=instance_filter)
-        valid_instances = processor.process_jsonls(valid_files,
+        valid_instances = processor.process_jsonls([valid_files],
                                                    instance_filter=instance_filter)
-        test_instances = processor.process_jsonls(test_files,
+        test_instances = processor.process_jsonls([test_files],
                                                   instance_filter=instance_filter)
 
         if args.train_subsample_num > 0:
@@ -692,15 +696,15 @@ def main(args):
                                        require_masks=True)
 
     train_loader = DataLoader(train_dataset,
-                              batch_size=80,
+                              batch_size=args.batch_size,
                               shuffle=True,
                               collate_fn=collator)
     valid_loader = DataLoader(valid_dataset,
-                              batch_size=80,
+                              batch_size=args.batch_size,
                               shuffle=False,
                               collate_fn=collator)
     test_loader = DataLoader(test_dataset,
-                             batch_size=80,
+                             batch_size=args.batch_size,
                              shuffle=False,
                              collate_fn=collator)
 
