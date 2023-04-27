@@ -19,7 +19,8 @@ def fix_join_artifacts(text: str):
 
 def fix_single_quotes(input_str: str):
     # removes all spaces between single quotes to fix char pasing
-    return re.sub(r"\s+(?=(?:(?:[^']*'){2})*[^']*'[^']*$)", '', input_str)
+    space_rm = re.sub(r"\s+(?=(?:(?:[^']*'){2})*[^']*'[^']*$)", '', input_str)
+    return space_rm.replace("''", "' '")
 
 
 def join_lines_default(tokens: List[str], keywords: Set[str]):
@@ -116,8 +117,8 @@ def check_tree_validity(root: tree_sitter.Node, max_depth: int = 3):
 
 
 if __name__ == '__main__':
-    LANG = 'cpp'
-    LOG_PATH = './logs/baseline_gcj_cpp.log'
+    LANG = 'java'
+    LOG_PATH = './logs/csn-eval-bert-2023-04-23-11-18-50.log'
 
     KEYWORD_DIR = './data/keywords'
     KEYWORD_PATH = f'{KEYWORD_DIR}/{"c" if LANG in {"c", "cpp"} else LANG}.txt'
@@ -147,16 +148,16 @@ if __name__ == '__main__':
 
             # line_fix = json.loads(line)['code']
 
-            # if LANG == 'java':
-            #     line_fix = f'public class A {{ {line_fix} }}'
+            if LANG == 'java':
+                line_fix = f'public class A {{ {line_fix} }}'
 
             tree = parser.parse(bytes(line_fix, 'utf-8'))
 
             if check_tree_validity(tree.root_node, MAX_DEPTH):
                 valid_trees += 1
-            # else:
-            #     print(line_fix)
-            #     print()
+            else:
+                print(line_fix)
+                print()
             total_trees += 1
 
     print(f'Valid trees: {valid_trees}/{total_trees} ({valid_trees / total_trees:.4f})')

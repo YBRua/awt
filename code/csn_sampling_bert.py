@@ -408,8 +408,8 @@ def main(args):
     # prepare data
     processor = CodeSearchNetProcessor()
     # instances = processor.process_jsonls(get_jsonl_filenames(args))
-    base_dir = '/home/liwei/csy/Code-Text/code-to-text/dataset/java'
-    test_files = os.path.join(base_dir, 'test.jsonl')
+    base_dir = './data'
+    test_files = os.path.join(base_dir, 'test_comments_removed.jsonl')
     instances = processor.process_jsonls([test_files])
     logger.info(f'num of total instances: {len(instances)}')
 
@@ -425,12 +425,12 @@ def main(args):
     logger.info(f'vocab size: {vocab_size}')
 
     # instances = [inst for inst in instances if len(inst.tokens) <= 120]
-    filtered_instances = []
-    for i, instance in enumerate(instances):
-        if len(instance.tokens) <= 128:
-            filtered_instances.append(instance)
-            filtered_to_orig_idx.append(i)
-    instances = filtered_instances
+    # filtered_instances = []
+    # for i, instance in enumerate(instances):
+    #     if len(instance.tokens) <= 128:
+    #         filtered_instances.append(instance)
+    #         filtered_to_orig_idx.append(i)
+    # instances = filtered_instances
 
     logger.info(f'num of filtered instances: {len(instances)}')
 
