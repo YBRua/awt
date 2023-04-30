@@ -1,4 +1,5 @@
 import os
+import time
 import torch
 import logging
 import numpy as np
@@ -239,6 +240,10 @@ def evaluate(model_gen: TranslatorGeneratorModel,
     y_out = []
     y_label = []
 
+    tot_pipeline_time = 0
+    tot_encode_time = 0
+    tot_decode_time = 0
+
     criterion_lm = nn.CrossEntropyLoss()
     for bid, batch in enumerate(tqdm(dataloader)):
         data, lengths, msgs = batch
@@ -255,6 +260,7 @@ def evaluate(model_gen: TranslatorGeneratorModel,
             # watermark encoding
             # both_embeddings: (B, H) embedding of sentence + watermark
             # sent_encoder_out: (L, B, H) final hidden output of transformer encoder
+            enc_start = time.time()
             both_embeddings, sent_encoder_out = model_gen.forward_sent_encoder(
                 data, msgs, args.gumbel_temp)
 
@@ -307,14 +313,23 @@ def evaluate(model_gen: TranslatorGeneratorModel,
             # if all distances are zero
             if best_beam_idx == -1:
                 best_beam_idx = beam_argsort[0]
+            enc_time = time.time() - enc_start
 
             # watermark decoding
+            dec_start = time.time()
             best_beam_data = word_idx_beams[best_beam_idx]
             best_beam_emb = model_gen.forward_sent(best_beam_data,
                                                    msgs,
                                                    args.gumbel_temp,
                                                    only_embedding=True)
             msg_out = model_gen.forward_msg_decode(best_beam_emb)
+            dec_end = time.time()
+            dec_time = dec_end - dec_start
+            pipe_time = enc_time + dec_time
+
+            tot_encode_time += enc_time
+            tot_decode_time += dec_time
+            tot_pipeline_time += pipe_time
 
             fake_out = model_disc(candidates_emb[best_beam_idx].detach())
             label.fill_(FAKE_LABEL_VAL)
@@ -392,6 +407,9 @@ def evaluate(model_gen: TranslatorGeneratorModel,
         'disc_f1': f1s,
         'p_value': np.mean(p_value),
         'p_value_inst': p_value_smaller / len(p_value),
+        'encode_time': tot_encode_time / batch_count,
+        'decode_time': tot_decode_time / batch_count,
+        'pipeline_time': tot_pipeline_time / batch_count,
     }
 
 
@@ -425,12 +443,11 @@ def main(args):
     logger.info(f'vocab size: {vocab_size}')
 
     # instances = [inst for inst in instances if len(inst.tokens) <= 120]
-    # filtered_instances = []
-    # for i, instance in enumerate(instances):
-    #     if len(instance.tokens) <= 128:
-    #         filtered_instances.append(instance)
-    #         filtered_to_orig_idx.append(i)
-    # instances = filtered_instances
+    filtered_instances = []
+    for i, instance in enumerate(instances):
+        filtered_instances.append(instance)
+        filtered_to_orig_idx.append(i)
+    instances = filtered_instances
 
     logger.info(f'num of filtered instances: {len(instances)}')
 
