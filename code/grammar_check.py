@@ -1,8 +1,8 @@
 import re
-import json
 import tree_sitter
-import string
+from tqdm import tqdm
 from tree_sitter import Parser, Language
+from check_illegal import KeywordChecker
 
 from typing import List, Set
 
@@ -19,7 +19,7 @@ def fix_join_artifacts(text: str):
 
 def fix_single_quotes(input_str: str):
     # removes all spaces between single quotes to fix char pasing
-    space_rm = re.sub(r"\s+(?=(?:(?:[^']*'){2})*[^']*'[^']*$)", '', input_str)
+    space_rm = re.sub(r"([^']*)\s+'\s+", r"\1'", input_str)
     return space_rm.replace("''", "' '")
 
 
@@ -117,8 +117,8 @@ def check_tree_validity(root: tree_sitter.Node, max_depth: int = 3):
 
 
 if __name__ == '__main__':
-    LANG = 'java'
-    LOG_PATH = './logs/csn-eval-bert-2023-04-23-11-18-50.log'
+    LANG = 'cpp'
+    LOG_PATH = './logs/cwm-eval-simple-2023-04-27-16-45-41.log'
 
     KEYWORD_DIR = './data/keywords'
     KEYWORD_PATH = f'{KEYWORD_DIR}/{"c" if LANG in {"c", "cpp"} else LANG}.txt'
@@ -132,13 +132,14 @@ if __name__ == '__main__':
                            LANG)
     parser = Parser()
     parser.set_language(PARSER_LANG)
+    checker = KeywordChecker(parser)
 
     with open(LOG_PATH, 'r') as fi:
         lines = fi.readlines()
 
     valid_trees = 0
     total_trees = 0
-    for line in lines:
+    for line in tqdm(lines):
         if line.startswith('[MODIFIED]'):
             line_tokens = line.replace('[MODIFIED]', '').strip().split()
             line = join_lines(line_tokens, keywords, LANG)
@@ -155,9 +156,10 @@ if __name__ == '__main__':
 
             if check_tree_validity(tree.root_node, MAX_DEPTH):
                 valid_trees += 1
-            else:
-                print(line_fix)
-                print()
+            # else:
+            #     print(join_lines(line_tokens, keywords, LANG))
+            #     print(line_fix)
+            #     print()
             total_trees += 1
 
     print(f'Valid trees: {valid_trees}/{total_trees} ({valid_trees / total_trees:.4f})')
