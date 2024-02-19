@@ -423,10 +423,14 @@ def main(args):
 
     actual_test_instances = []
     for test_instance in test_instances:
-        tree = parser.parse(bytes(test_instance.source_code, 'utf-8'))
+        if args.lang == 'java':
+            source = f'public class Wrapper {{ {test_instance.source_code} }}'
+        else:
+            source = test_instance.source_code
+        tree = parser.parse(bytes(source, 'utf-8'))
         if check_tree_validity(tree.root_node, MAX_DEPTH):
             actual_test_instances.append(test_instance)
-    
+
     print(len(actual_test_instances))
 
     dataset = processor.build_dataset(actual_test_instances, vocab)

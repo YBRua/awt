@@ -12,7 +12,7 @@ from sentence_transformers import SentenceTransformer
 from scipy.stats import binom_test
 
 from sklearn.metrics import f1_score
-from utils import batchify, repackage_hidden, get_batch_different, generate_msgs
+from utils import batchify, repackage_hidden, get_batch_fixed, generate_msgs
 from nltk.translate.meteor_score import meteor_score
 
 parser = argparse.ArgumentParser(
@@ -140,6 +140,10 @@ if torch.cuda.is_available():
 ###############################################################################
 
 corpus = data.Corpus(args.data)
+# overwrite test data
+corpus.test = corpus.tokenize_jsonl(
+    "./test_out_bert_gpt2-watermarked-train-final_original_text.jsonl"
+)
 
 train_batch_size = 20
 eval_batch_size = 1
@@ -265,14 +269,13 @@ def noisy_sampling(sent_encoder_out, both_embeddings, data):
     return candidates_emb, candidates_one_hot, candidates_soft_prob
 
 
-def evaluate(data_source, out_file, batch_size=10, on_train=False):
+def extract_watermark(data_source, out_file, batch_size=10, on_train=False):
     # Turn on evaluation mode which disables dropout.
     model_gen.eval()
     model_disc.eval()
     langModel.eval()
 
     total_loss_lm = 0
-    ntokens = len(corpus.dictionary)
     tot_count = 0
     correct_msg_count = 0
     tot_count_bits = 0
@@ -293,155 +296,58 @@ def evaluate(data_source, out_file, batch_size=10, on_train=False):
     y_out = []
     y_label = []
     for i in range(0, data_source.size(0) - args.bptt, args.bptt):
-        data, msgs, targets = get_batch_different(
-            data_source, i, args, all_msgs, evaluation=True
+        data, msgs, targets = get_batch_fixed(
+            data_source, i, args, [1, 1, 0, 0], evaluation=True
         )
         long_msg[
             :,
             long_msg_count * args.msg_len : long_msg_count * args.msg_len
             + args.msg_len,
         ] = msgs
-        if args.use_lm_loss:
-            hidden = langModel.init_hidden(batch_size)
+
         with torch.no_grad():
-            both_embeddings, sent_encoder_out = model_gen.forward_sent_encoder(
-                data, msgs, args.gumbel_temp
-            )
-            candidates_emb, candidates_one_hot, candidates_soft_prob = noisy_sampling(
-                sent_encoder_out, both_embeddings, data
-            )
             data_emb = model_gen.forward_sent(
                 data, msgs, args.gumbel_temp, only_embedding=True
             )
-            real_out = model_disc(data_emb)
-            label = torch.full((data.size(1), 1), real_label)
-            if args.cuda:
-                label = label.cuda()
-            real_out_label = torch.round(sig(real_out))
-            real_correct = real_correct + np.count_nonzero(
-                np.equal(
-                    label.detach().cpu().numpy().astype(int),
-                    real_out_label.detach().cpu().numpy().astype(int),
-                )
-                == True
+            msg_out = model_gen.forward_msg_decode(data_emb)
+            long_msg_out[
+                :,
+                long_msg_count * args.msg_len : long_msg_count * args.msg_len
+                + args.msg_len,
+            ] = msg_out
+
+            # meteor_tot = meteor_tot + meteor_beams[best_beam_idx]
+            out_file.write("****" + "\n")
+            out_file.write("sample #" + str(batch_count) + "\n")
+
+            if batch_count % 250 == 0:
+                print(f"batch_count: {batch_count}")
+
+            orig_text = ""
+            for k in range(0, data.size(0)):
+                orig_text = orig_text + corpus.dictionary.idx2word[data[k, 0]] + " "
+
+            # meteor_pair = meteor_beams[best_beam_idx]
+            # out_file.write(str(meteor_pair) + '\n')
+            out_file.write("original text: " + orig_text + "\n")
+            out_file.write(
+                "correct bits: "
+                + str(compare_msg_bits(msgs, torch.round(sig(msg_out))))
+                + "\n"
             )
-            y_label.append(label.detach().cpu().numpy().astype(int)[0, 0])
-            y_out.append(real_out_label.detach().cpu().numpy().astype(int)[0, 0])
-
-            output_text_beams = []
-            meteor_beams = []
-            meteor_pair = "not available"
-            word_idx_beams = []
-            for beam in range(0, args.samples_num):
-                word_idx = get_idx_from_logits(
-                    candidates_soft_prob[beam], data.size(0), batch_size
-                )
-                word_idx_beams.append(word_idx)
-                output_text = ""
-                orig_text = ""
-                for k in range(0, data.size(0)):
-                    output_text = (
-                        output_text + corpus.dictionary.idx2word[word_idx[k, 0]] + " "
-                    )
-                    orig_text = orig_text + corpus.dictionary.idx2word[data[k, 0]] + " "
-                output_text_beams.append(output_text)
-                sentences = [output_text, orig_text]
-                sbert_embs = sbert_model.encode(sentences)
-                # meteor_beams.append(meteor_score([orig_text],output_text))
-                bert_diff[beam] = np.linalg.norm(sbert_embs[0] - sbert_embs[1])
-
-            # get the best beam with non-zero diff
-            best_beam_idx = -1
-            beam_argsort = np.argsort(np.asarray(bert_diff))
-            for beam in range(0, args.samples_num):
-                if bert_diff[beam_argsort[beam]] > 0:
-                    best_beam_idx = beam_argsort[beam]
-                    break
-            # if all distances are zero
-            if best_beam_idx == -1:
-                best_beam_idx = beam_argsort[0]
-
-            best_beam_data = word_idx_beams[best_beam_idx]
-            best_beam_emb = model_gen.forward_sent(
-                best_beam_data, msgs, args.gumbel_temp, only_embedding=True
+            out_file.write(
+                "gt msg: "
+                + np.array2string(msgs.detach().cpu().numpy().astype(int))
+                + "\n"
             )
-            msg_out = model_gen.forward_msg_decode(best_beam_emb)
-
-            fake_out = model_disc(candidates_emb[best_beam_idx].detach())
-            label.fill_(fake_label)
-            fake_out_label = torch.round(sig(fake_out))
-            fake_correct = fake_correct + np.count_nonzero(
-                np.equal(
-                    label.detach().cpu().numpy().astype(int),
-                    fake_out_label.detach().cpu().numpy().astype(int),
+            out_file.write(
+                "decoded msg: "
+                + np.array2string(
+                    torch.round(sig(msg_out)).detach().cpu().numpy().astype(int)
                 )
-                == True
+                + "\n"
             )
-            y_label.append(label.detach().cpu().numpy().astype(int)[0, 0])
-            y_out.append(fake_out_label.detach().cpu().numpy().astype(int)[0, 0])
-            # language loss
-            if args.use_lm_loss:
-                lm_targets = word_idx_beams[best_beam_idx][
-                    1 : candidates_one_hot[best_beam_idx].size(0)
-                ]
-                lm_targets = lm_targets.view(
-                    lm_targets.size(0) * lm_targets.size(1),
-                )
-                lm_inputs = word_idx_beams[best_beam_idx][
-                    0 : candidates_one_hot[best_beam_idx].size(0) - 1
-                ]
-                lm_out, hidden = langModel(lm_inputs, hidden, decode=True)
-                lm_loss = criterion_lm(lm_out, lm_targets)
-                total_loss_lm += lm_loss.data
-                hidden = repackage_hidden(hidden)
 
-            if bert_diff[best_beam_idx] < args.bert_threshold:
-                long_msg_out[
-                    :,
-                    long_msg_count * args.msg_len : long_msg_count * args.msg_len
-                    + args.msg_len,
-                ] = msg_out
-                l2_distances = l2_distances + bert_diff[best_beam_idx]
-                # meteor_tot = meteor_tot + meteor_beams[best_beam_idx]
-                out_file.write("****" + "\n")
-                out_file.write("sample #" + str(batch_count) + "\n")
-
-                if batch_count % 250 == 0:
-                    print(f"batch_count: {batch_count}")
-
-                # meteor_pair = meteor_beams[best_beam_idx]
-                # out_file.write(str(meteor_pair) + '\n')
-                out_file.write("bert_diff: " + str(bert_diff[best_beam_idx]) + "\n")
-                out_file.write("original text: " + orig_text + "\n")
-                out_file.write(
-                    "modified text: " + output_text_beams[best_beam_idx] + "\n"
-                )
-                out_file.write(
-                    "correct bits: "
-                    + str(compare_msg_bits(msgs, torch.round(sig(msg_out))))
-                    + "\n"
-                )
-                out_file.write(
-                    "gt msg: "
-                    + np.array2string(msgs.detach().cpu().numpy().astype(int))
-                    + "\n"
-                )
-                out_file.write(
-                    "decoded msg: "
-                    + np.array2string(
-                        torch.round(sig(msg_out)).detach().cpu().numpy().astype(int)
-                    )
-                    + "\n"
-                )
-            else:
-                # meteor_pair = 1
-                # meteor_tot = meteor_tot + meteor_pair
-                msg_out_random = model_gen.forward_msg_decode(data_emb)
-                long_msg_out[
-                    :,
-                    long_msg_count * args.msg_len : long_msg_count * args.msg_len
-                    + args.msg_len,
-                ] = msg_out_random
         if batch_count != 0 and (batch_count + 1) % args.msgs_segment == 0:
             long_msg_count = 0
             tot_count = tot_count + 1
@@ -458,18 +364,8 @@ def evaluate(data_source, out_file, batch_size=10, on_train=False):
             long_msg_count = long_msg_count + 1
 
         batch_count = batch_count + 1
-        f_metrics.write(
-            str(meteor_pair)
-            + ","
-            + str(bert_diff[best_beam_idx])
-            + ","
-            + str(lm_loss.item())
-            + "\n"
-        )
     Fscore = f1_score(y_label, y_out)
     p_value_smaller = sum(i < 0.05 for i in p_value)
-    if args.use_lm_loss:
-        total_loss_lm = total_loss_lm.item()
 
     meteor_tot = 0.0
     return (
@@ -500,42 +396,9 @@ if args.cuda:
     model_gen.cuda()
     model_disc.cuda()
 
-f = open("val_out_bert.txt", "w")
-f_metrics = open("val_out_metrics_bert.txt", "w")
-(
-    val_lm_loss,
-    val_correct_msg,
-    val_correct_bits_msg,
-    val_meteor,
-    val_l2_sbert,
-    val_correct_fake,
-    val_correct_real,
-    val_Fscore,
-    val_pvalue,
-    val_pvalue_inst,
-) = evaluate(val_data, f, eval_batch_size)
-
-print("-" * 150)
-print(
-    "| validation | lm loss {:5.2f} | msg accuracy {:5.2f} | msg bit accuracy {:5.2f} |  meteor {:5.4f} | SentBert dist. {:5.4f} | fake accuracy {:5.2f} | real accuracy {:5.2f} | F1 score {:.5f} | P-value {:.9f} | P-value inst {:5.2f}".format(
-        val_lm_loss,
-        val_correct_msg * 100,
-        val_correct_bits_msg * 100,
-        val_meteor,
-        val_l2_sbert,
-        val_correct_fake * 100,
-        val_correct_real * 100,
-        val_Fscore,
-        val_pvalue,
-        val_pvalue_inst * 100,
-    )
-)
-print("-" * 150)
-f.close()
-
 # Run on test data.
-f = open("test_out.txt", "w")
-f_metrics = open("test_out_metrics.txt", "w")
+f = open("watermarked_test_out.txt", "w")
+f_metrics = open("watermarked_test_out_metrics.txt", "w")
 (
     test_lm_loss,
     test_correct_msg,
@@ -547,7 +410,7 @@ f_metrics = open("test_out_metrics.txt", "w")
     test_Fscore,
     test_pvalue,
     test_pvalue_inst,
-) = evaluate(test_data, f, test_batch_size)
+) = extract_watermark(test_data, f, test_batch_size)
 
 print("=" * 150)
 print(
@@ -561,7 +424,7 @@ print(
         test_correct_real * 100,
         test_Fscore,
         test_pvalue,
-        val_pvalue_inst * 100,
+        test_pvalue_inst * 100,
     )
 )
 print("=" * 150)

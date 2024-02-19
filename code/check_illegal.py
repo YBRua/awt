@@ -1,17 +1,18 @@
 from tree_sitter import Language, Parser
 
-
-java_keywords = ["abstract", "assert", "boolean", "break", "byte", "case", "catch", "do", "double", "else", "enum",
-                 "extends", "final", "finally", "float", "for", "goto", "if", "implements", "import", "instanceof",
-                 "int", "interface", "native", "new", "package", "private", "protected", "public", "return",
-                 "short", "static", "strictfp", "super", "switch", "throws", "transient", "try", "void", "volatile",
-                 "while", "long"]
-java_special_ids = ["main", "args", "Math", "System", "Random", "Byte", "Short", "Integer", "Float", "Double",
-                    "Character",
-                    "Boolean", "Data", "ParseException", "SimpleDateFormat", "Calendar", "Object", "String",
-                    "StringBuffer",
-                    "StringBuilder", "DateFormat", "Collection", "List", "Map", "Set", "Queue", "ArrayList", "HashSet",
-                    "HashMap", "Long"]
+java_keywords = [
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "do", "double",
+    "else", "enum", "extends", "final", "finally", "float", "for", "goto", "if",
+    "implements", "import", "instanceof", "int", "interface", "native", "new", "package",
+    "private", "protected", "public", "return", "short", "static", "strictfp", "super",
+    "switch", "throws", "transient", "try", "void", "volatile", "while", "long"
+]
+java_special_ids = [
+    "main", "args", "Math", "System", "Random", "Byte", "Short", "Integer", "Float",
+    "Double", "Character", "Boolean", "Data", "ParseException", "SimpleDateFormat",
+    "Calendar", "Object", "String", "StringBuffer", "StringBuilder", "DateFormat",
+    "Collection", "List", "Map", "Set", "Queue", "ArrayList", "HashSet", "HashMap", "Long"
+]
 
 
 class KeywordChecker:
@@ -42,7 +43,9 @@ class KeywordChecker:
             token_type_lower = token_type.lower()
             if token_type_lower in self.keywords.keys():
                 if token_type not in self.keywords[token_type_lower]:
-                    # print(f'{token_type} is illegal, legal type is {self.keywords[token_type_lower]}')
+                    # print(func)
+                    # print(f'WARNING: {token_type} is illegal, '
+                    #       f'should be {self.keywords[token_type_lower]}')
                     return False
         return True
 
@@ -73,7 +76,8 @@ def main():
     # }
     # '''
 
-    LANGUAGE = Language('/home/liwei/Code-Watermark/variable-watermark/resources/my-languages.so', 'java')
+    LANGUAGE = Language(
+        '/home/liwei/Code-Watermark/variable-watermark/resources/my-languages.so', 'java')
     parser = Parser()
     parser.set_language(LANGUAGE)
     lang = 'java'

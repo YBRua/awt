@@ -11,7 +11,7 @@ import data
 import model_mt_autoenc_cce
 import lang_model
 
-from utils import batchify, get_batch_different, generate_msgs, repackage_hidden
+from utils import batchify, get_batch_fixed, generate_msgs, repackage_hidden
 from fb_semantic_encoder import BLSTMEncoder
 
 parser = argparse.ArgumentParser(
@@ -446,7 +446,7 @@ def evaluate(data_source, batch_size=10):
     for i in range(0, data_source.size(0) - args.bptt, args.bptt):
         if args.use_lm_loss:
             hidden = langModel.init_hidden(batch_size)
-        data, msgs, targets = get_batch_different(data_source,
+        data, msgs, targets = get_batch_fixed(data_source,
                                                   i,
                                                   args,
                                                   all_msgs,
@@ -538,14 +538,14 @@ def train():
         if not args.fixed_length:
             bptt = args.bptt if np.random.random() < 0.95 else args.bptt / 2.
             seq_len = max(5, int(np.random.normal(bptt, 5)))
-            data, msgs, targets = get_batch_different(train_data,
+            data, msgs, targets = get_batch_fixed(train_data,
                                                       i,
                                                       args,
                                                       all_msgs,
                                                       seq_len=seq_len)
         else:
             seq_len = args.bptt
-            data, msgs, targets = get_batch_different(train_data,
+            data, msgs, targets = get_batch_fixed(train_data,
                                                       i,
                                                       args,
                                                       all_msgs,

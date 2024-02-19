@@ -1,5 +1,5 @@
 conda activate torch112
-CUDA_VISIBLE_DEVICES=7 python cwm_main_train.py \
+CUDA_VISIBLE_DEVICES=5 python cwm_main_train.py \
  --msg_len 4 \
  --data ~/code-watermarking/data/github_c \
  --lang c \

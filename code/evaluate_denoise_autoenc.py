@@ -12,7 +12,7 @@ from sentence_transformers import SentenceTransformer
 from scipy.stats import binom_test
 
 from sklearn.metrics import f1_score
-from utils import batchify, repackage_hidden, get_batch_different, generate_msgs, get_batch_noise
+from utils import batchify, repackage_hidden, get_batch_fixed, generate_msgs, get_batch_noise
 from nltk.translate.meteor_score import meteor_score
 
 parser = argparse.ArgumentParser(description='PyTorch PennTreeBank RNN/LSTM Language Model')

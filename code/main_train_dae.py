@@ -11,7 +11,7 @@ import data
 import model_denoise_autoenc_attack
 import lang_model
 
-from utils import batchify, get_batch_different, generate_msgs, repackage_hidden, get_batch_noise
+from utils import batchify, get_batch_fixed, generate_msgs, repackage_hidden, get_batch_noise
 
 parser = argparse.ArgumentParser(description='PyTorch PennTreeBank RNN/LSTM Language Model')
 parser.add_argument('--data', type=str, default='data/penn/',

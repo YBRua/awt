@@ -170,13 +170,13 @@ To run the classification on the full AWT output.
 
 - To train the classifier in the paper use: 
 ```javascript
-python main_disc.py --data data/wikitext-2 --batch_size 64  --epochs 300 --save WT2_classifier --optimizer adam --fixed_length 0 --bptt 80 --dropout_transformer 0.3 --encoding_layers 3 --classifier transformer --ratio 1
+python main_disc.py --data data_classifier --batch_size 64  --epochs 300 --save WT2_classifier_2 --optimizer adam --fixed_length 0 --bptt 80 --dropout_transformer 0.3 --encoding_layers 3 --classifier transformer --ratio 1
 ```
 where '--data' takes the directory containing the training data (found in 'data_classifier')
 
 - To evaluate the classifier (on the generated data used before), use: 
 ```javascript
-python evaluate_disc.py --data data/wikitext-2 --bptt 80 --disc_path [classifier_name] --seed 200  
+python evaluate_disc.py --data data_classifier --bptt 80 --disc_path WT2_classifier --seed 200  
 ```
 
 - - -

@@ -30,7 +30,8 @@ class CodeWatermarkProcessor:
 
         with open(fpath, 'r', encoding='utf-8') as f:
             source = f.read()
-        code_tokens, word_tokens = self.code_tokenizer.get_tokens(source)
+        code_tokenizer = CodeTokenizer(lang=self.lang)
+        code_tokens, word_tokens = code_tokenizer.get_tokens(source)
         return source, code_tokens, word_tokens
 
     def _load_nested_dir_mp_worker(self, args: Tuple[str, str, str]):

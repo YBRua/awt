@@ -13,7 +13,7 @@ from scipy.stats import binom_test
 import time
 
 from sklearn.metrics import f1_score
-from utils import batchify, repackage_hidden, get_batch_different, generate_msgs
+from utils import batchify, repackage_hidden, get_batch_fixed, generate_msgs
 from nltk.translate.meteor_score import meteor_score
 
 parser = argparse.ArgumentParser(
@@ -270,7 +270,7 @@ def evaluate(data_source, out_file, batch_size=10, on_train=False):
     y_out = []
     y_label = []
     for i in range(0, data_source.size(0) - args.bptt, args.bptt):
-        data, msgs, targets = get_batch_different(data_source,
+        data, msgs, targets = get_batch_fixed(data_source,
                                                   i,
                                                   args,
                                                   all_msgs,

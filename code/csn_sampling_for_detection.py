@@ -1,7 +1,9 @@
 import os
 import time
+import json
 import copy
 import torch
+import random
 import logging
 import numpy as np
 import torch.nn as nn
@@ -251,6 +253,7 @@ def evaluate(model_gen: TranslatorGeneratorModel,
     tot_beam_search_time = 0
 
     criterion_lm = nn.CrossEntropyLoss()
+    watermarked_objects = []
     for bid, batch in enumerate(tqdm(dataloader)):
         data, lengths, msgs = batch
         data = data.to(device)
@@ -261,7 +264,6 @@ def evaluate(model_gen: TranslatorGeneratorModel,
 
         if args.use_lm_loss:
             hidden = lm.init_hidden(bsz=1)
-
         with torch.no_grad():
             # watermark encoding
             # both_embeddings: (B, H) embedding of sentence + watermark
@@ -388,6 +390,13 @@ def evaluate(model_gen: TranslatorGeneratorModel,
                 logger.info(f'[ORIGINAL] {orig_text}')
                 logger.info(f'[MODIFIED] {output_text_beams[best_beam_idx]}')
                 logger.info('=' * 90)
+                obj = {
+                    'after_watermark': output_text_beams[best_beam_idx],
+                    'orignial': orig_text,
+                    'after_watermark_tokens': output_text_beams[best_beam_idx].split(),
+                    'contains_watermark': True
+                }
+                watermarked_objects.append(obj)
             else:
                 # meteor_pair = 1
                 # meteor_tot = meteor_tot + meteor_pair
@@ -434,11 +443,12 @@ def evaluate(model_gen: TranslatorGeneratorModel,
         'tot_sampling_time': tot_sampling_time / batch_count,
         'tot_gan_time': tot_gan_time / batch_count,
         'tot_beam_search_time': tot_beam_search_time / batch_count,
-    }
+    }, watermarked_objects
 
 
 def main(args):
     # setting things up
+    random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
@@ -449,8 +459,6 @@ def main(args):
 
     # prepare data
     processor = CodeSearchNetProcessor(lang=args.lang)
-    # instances = processor.process_jsonls(get_jsonl_filenames(args))
-    base_dir = './data'
     test_files = os.path.join(args.data, f'{args.split}.jsonl')
     instances = processor.process_jsonls([test_files])
     logger.info(f'num of total instances: {len(instances)}')
@@ -475,18 +483,15 @@ def main(args):
 
     logger.info(f'num of filtered instances: {len(instances)}')
 
-    # random subsample for testing
-    if args.dataset_subsample_num <= 0:
-        subsampled = instances
-    else:
-        subsampled_idx = np.random.choice(len(instances),
-                                          args.dataset_subsample_num,
-                                          replace=False)
-        subsampled = [instances[i] for i in subsampled_idx]
-    logger.info(f'num of subsampled instances: {len(subsampled)}')
+    random.shuffle(instances)
+    sep_idx = len(instances) // 2
+    to_wm = instances[:sep_idx]
+    no_wm = instances[sep_idx:]
+    logger.info(f'num of instances to watermark: {len(to_wm)}')
 
-    dataset = CodeSearchNetDataset(subsampled, vocab)
+    dataset = CodeSearchNetDataset(to_wm, vocab)
     collator = CSNWatermarkingCollator(0, args.msg_len, 512)
+    # forced batch size to 1
     dataloader = DataLoader(dataset, batch_size=1, collate_fn=collator, shuffle=False)
 
     # Load the best saved model.
@@ -520,12 +525,30 @@ def main(args):
     sbert_model.to(device)
     lm.to(device)
 
-    res = evaluate(model_gen, model_disc, lm, sbert_model, dataloader, vocab, device,
-                   logger, args)
+    res, wm_objs = evaluate(model_gen, model_disc, lm, sbert_model, dataloader, vocab,
+                            device, logger, args)
 
     res_str = prettify_res_dict(res, prefix=f'| {args.lang}-{args.split} ')
     logger.info(res_str)
     print(res_str)
+
+    nowm_objs = []
+    for inst in no_wm:
+        obj = {
+            'after_watermark': ' '.join(inst.tokens),
+            'orignial': ' '.join(inst.tokens),
+            'after_watermark_tokens': inst.tokens,
+            'contains_watermark': False
+        }
+        nowm_objs.append(obj)
+
+    assert len(wm_objs) == len(to_wm)
+    assert len(nowm_objs) == len(no_wm)
+    assert len(wm_objs) + len(nowm_objs) == len(instances)
+
+    with open(f'detector_{args.lang}_{args.split}.jsonl', 'w') as fo:
+        for obj in wm_objs + nowm_objs:
+            fo.write(json.dumps(obj) + '\n')
 
 
 if __name__ == '__main__':

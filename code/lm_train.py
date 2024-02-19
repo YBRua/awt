@@ -143,7 +143,8 @@ else:
         corpus = data.Corpus(args.wikitext_path)
     else:
         print('Using CodeSearchNet dataset')
-        source_dir = os.path.join(args.data, args.lang)
+        # source_dir = os.path.join(args.data, args.lang)
+        source_dir = args.data
         train_dataset = CodeSearchNetDataset.from_json(
             os.path.join(source_dir, args.train_source))
         valid_dataset = CodeSearchNetDataset.from_json(

@@ -1,8 +1,43 @@
 import re
+import sys
+import tree_sitter
 
-from typing import List
 from sctokenizer import CppTokenizer, JavaTokenizer
-from sctokenizer import Token, TokenType
+from sctokenizer.token import TokenType, Token
+from typing import List
+
+
+def _join_by_rows(tokens: List[Token]):
+    rows = []
+    current_row = 0
+    for token in tokens:
+        if token.line > current_row:
+            current_row = token.line
+            rows.append([])
+        rows[-1].append(token.token_value)
+
+    row_strs = [' '.join(row) for row in rows]
+    return row_strs
+
+
+def fix_join_artifacts(text: str):
+    # remove spaces between dots
+    text = re.sub(r'\s?\.\s?(?=\w+)', '.', text)
+    # remove spaces between underscores
+    text = re.sub(r'_\s?(?=\w+)', '_', text)
+    # replace 0X with 0x
+    text = re.sub(r'0X', '0x', text)
+    return text
+
+
+def fix_single_quotes(input_str: str):
+    # removes all spaces between single quotes to fix char pasing
+    return re.sub(r"\s+(?=(?:(?:[^']*'){2})*[^']*'[^']*$)", '', input_str)
+
+
+def tokens_to_strings(tokens: List[Token]):
+    row_joined = _join_by_rows(tokens)
+    return ' '.join(fix_single_quotes(fix_join_artifacts(x)) for x in row_joined)
 
 
 def sanitize_name(name):
@@ -57,6 +92,52 @@ def split_identifier(c_token: str) -> List[str]:
         return split_name(c_token)
 
 
+class JavaScriptTokenizer:
+    def __init__(self):
+        parser = tree_sitter.Parser()
+        parser_lang = tree_sitter.Language('./parser/languages.so', 'javascript')
+        parser.set_language(parser_lang)
+        self.parser = parser
+
+    def collect_tokens(self, root: tree_sitter.Node) -> List[Token]:
+        tokens = []
+
+        def _collect_token(node: tree_sitter.Node):
+            if node.type == 'comment':
+                return
+            elif node.type in {'number'}:
+                tokens.append(
+                    Token(node.text.decode(), TokenType.CONSTANT, node.start_point[0],
+                          node.start_point[1]))
+            elif node.type in {'string', 'template_string', 'regex'}:
+                tokens.append(
+                    Token(node.text.decode(), TokenType.STRING, node.start_point[0],
+                          node.start_point[1]))
+            elif node.type in {
+                    'identifier', 'shorthand_property_identifier',
+                    'shorthan_property_identifier_pattern'
+            }:
+                tokens.append(
+                    Token(node.text.decode(), TokenType.IDENTIFIER, node.start_point[0],
+                          node.start_point[1]))
+            elif node.child_count == 0:
+                tokens.append(
+                    Token(node.text.decode(), TokenType.KEYWORD, node.start_point[0],
+                          node.start_point[1]))
+            else:
+                assert node.child_count > 0
+                for ch in node.children:
+                    _collect_token(ch)
+
+        _collect_token(root)
+        return tokens
+
+    def tokenize(self, code: str) -> List[Token]:
+        tree = self.parser.parse(bytes(code, 'utf-8'))
+        tokens = self.collect_tokens(tree.root_node)
+        return tokens
+
+
 class CodeTokenizer:
     def __init__(self, lang: str = 'c'):
         self.lang = lang
@@ -64,14 +145,20 @@ class CodeTokenizer:
             self.tokenizer = CppTokenizer()
         elif lang == 'java':
             self.tokenizer = JavaTokenizer()
+        elif lang == 'javascript':
+            self.tokenizer = JavaScriptTokenizer()
         else:
-            raise ValueError('Language must be either "c" or "java"')
+            raise ValueError(f'Unsupported language: {lang}')
 
     def _tokens_postprocess(self, tokens: List[Token]):
         res = []
         for token in tokens:
             if token.token_type == TokenType.COMMENT_SYMBOL:
-                raise RuntimeError('No comment allowed!')
+                # res.append('__comment__')
+                # raise RuntimeError('No comment allowed!')
+                # warnings.warn('sctokenizer found "comments" in the code')
+                # NOTE: for some reason sctokenizer may create "comments" in the code
+                continue
             if token.token_type == TokenType.STRING:
                 # res.extend(split_string_literal(token.token_value))
                 res.append('__string__')
@@ -90,3 +177,18 @@ class CodeTokenizer:
     def get_tokens(self, source: str):
         code_tokens = self.tokenizer.tokenize(source)
         return code_tokens, self._tokens_postprocess(code_tokens)
+
+
+if __name__ == '__main__':
+
+    def main(argv):
+        """Driver mostly for testing purposes."""
+        for filename in argv[1:]:
+            with open(filename, 'r') as f:
+                source = f.read()
+                if source is None:
+                    continue
+                for token in CodeTokenizer().get_tokens(source):
+                    print(token)
+
+    main(sys.argv)

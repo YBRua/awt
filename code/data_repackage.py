@@ -1,11 +1,14 @@
 import json
 from grammar_check import join_lines, fix_join_artifacts, fix_single_quotes
 
+
 if __name__ == '__main__':
-    LANG = 'java'
-    ORIGINAL_INPUT = 'data/test_pots.jsonl'
-    OUTPUT_FILE = 'data/test_pots_csn.jsonl'
-    LOG_OUTPUT = './logs/csn-eval-bert-2023-04-23-11-18-50.log'
+    LANG = 'javascript'
+    ORIGINAL_INPUT = '/home/liwei/codemark_dataset/javascript/test.jsonl'
+    OUTPUT_FILE = 'data/awt-code-csn-js-liwei.jsonl'
+    # LOG_OUTPUT = './logs/csn-eval-bert-2023-05-28-16-06-31.log'  # awt-modified
+    # LOG_OUTPUT = './logs/usenix-csn-java-awt-orig.log'  # awt-original
+    LOG_OUTPUT = './logs/csn-eval-bert-2023-11-16-21-33-49.log'
 
     # load keywords
     KEYWORD_DIR = './data/keywords'
@@ -49,29 +52,34 @@ if __name__ == '__main__':
             modified_line = log_lines[cursor]
             assert modified_line.startswith('[MODIFIED]')
             tokens = modified_line.replace('[MODIFIED]', '').strip().split()
-            line_val = join_lines(tokens, keywords, LANG)
-            line_fixed = fix_single_quotes(fix_join_artifacts(line_val)).strip()
+            # line_val = join_lines(tokens, keywords, LANG)
+            line_val = ' '.join(tokens)
+            # line_fixed = fix_single_quotes(fix_join_artifacts(line_val)).strip()
             id_to_modified_code[original_id] = {
-                'after_watermark': line_fixed,
+                'after_watermark': line_val,
                 'watermark': gt_msg,
                 'extract': dec_msg,
             }
 
         cursor += 1
 
+    print(len(id_to_modified_code))
+
     repackaged = []
     for i, ori_line in enumerate(original_lines):
         original_obj = json.loads(ori_line)
         obj = dict()
-        obj['docstr_token'] = original_obj['docstring_tokens']
+        # obj['docstring_tokens'] = original_obj['docstring_tokens']
+        obj['original_string'] = original_obj['original_string']
 
         if i in id_to_modified_code:
-            obj['output_origin_func'] = False  # flag for whether watermark succeeded
+            obj['output_original_func'] = False  # watermark succeeded
             obj['after_watermark'] = id_to_modified_code[i]['after_watermark']
             obj['watermark'] = id_to_modified_code[i]['watermark']
             obj['extract'] = id_to_modified_code[i]['extract']
         else:
-            obj['output_origin_func'] = True
+            print('?????')
+            obj['output_original_func'] = True
             obj['after_watermark'] = original_obj['code']
             obj['watermark'] = None
             obj['extract'] = None
@@ -81,4 +89,5 @@ if __name__ == '__main__':
     print(f'original: {len(original_lines)}, repackaged: {len(repackaged)}')
 
     with open(OUTPUT_FILE, 'w') as f:
-        json.dump(repackaged, f, indent=2)
+        for obj in repackaged:
+            f.write(json.dumps(obj) + '\n')

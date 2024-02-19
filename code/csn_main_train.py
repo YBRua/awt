@@ -641,7 +641,13 @@ def main(args):
 
     if any([train_dataset is None, valid_dataset is None, test_dataset is None]):
         processor = CodeSearchNetProcessor()
-        base_dir = '/home/liwei/csy/Code-Text/code-to-text/dataset/java'
+        # base_dir = args.data
+        if args.lang == 'javascript':
+            base_dir = '/home/borui/code-watermarking/datasets/csn_js/'
+        elif args.lang == 'java':
+            base_dir = '/home/borui/code-watermarking/datasets/csn_java/'
+        else:
+            raise RuntimeError('Unknown language')
         train_files = os.path.join(base_dir, 'train.jsonl')
         valid_files = os.path.join(base_dir, 'valid.jsonl')
         test_files = os.path.join(base_dir, 'test.jsonl')
@@ -877,11 +883,11 @@ def main(args):
                             optimizer_disc, criterion, criterion_recon)
                 logger.info('saving model (new best overall performance)')
                 stored_loss = tot_eval_loss
-            if eval_res['msg_loss'] < stored_loss_msg:
-                save_models(f'{args.save}_msg', model_gen, model_disc, optimizer_gen,
-                            optimizer_disc, criterion, criterion_recon)
-                logger.info('Saving model (new best msg validation)')
-                stored_loss_msg = eval_res['msg_loss']
+            # if eval_res['msg_loss'] < stored_loss_msg:
+            #     save_models(f'{args.save}_msg', model_gen, model_disc, optimizer_gen,
+            #                 optimizer_disc, criterion, criterion_recon)
+            #     logger.info('Saving model (new best msg validation)')
+            #     stored_loss_msg = eval_res['msg_loss']
             if text_eval_loss < stored_loss_text:
                 save_models(f'{args.save}_recon', model_gen, model_disc, optimizer_gen,
                             optimizer_disc, criterion, criterion_recon)

@@ -1,5 +1,6 @@
 import argparse
 import time
+import json
 import math
 import numpy as np
 import torch
@@ -12,7 +13,7 @@ from sentence_transformers import SentenceTransformer
 from scipy.stats import binom_test
 
 from sklearn.metrics import f1_score
-from utils import batchify, repackage_hidden, get_batch_different, generate_msgs
+from utils import batchify, repackage_hidden, get_batch_fixed, generate_msgs
 from nltk.translate.meteor_score import meteor_score
 
 parser = argparse.ArgumentParser(
@@ -144,7 +145,7 @@ corpus = data.Corpus(args.data)
 train_batch_size = 20
 eval_batch_size = 1
 test_batch_size = 1
-train_data = batchify(corpus.train, train_batch_size, args)
+train_data = batchify(corpus.train, eval_batch_size, args)
 val_data = batchify(corpus.valid, eval_batch_size, args)
 test_data = batchify(corpus.test, test_batch_size, args)
 
@@ -178,15 +179,6 @@ if args.use_lm_loss:
     if args.cuda:
         langModel = langModel.cuda()
         criterion_lm = criterion_lm.cuda()
-
-### generate random msgs ###
-all_msgs = generate_msgs(args)
-print(all_msgs)
-
-if not args.given_msg == []:
-    all_msgs = [int(i) for i in args.given_msg]
-    all_msgs = np.asarray(all_msgs)
-    all_msgs = all_msgs.reshape([1, args.msg_len])
 
 
 def random_cut_sequence(sequence, limit=10):
@@ -265,14 +257,13 @@ def noisy_sampling(sent_encoder_out, both_embeddings, data):
     return candidates_emb, candidates_one_hot, candidates_soft_prob
 
 
-def evaluate(data_source, out_file, batch_size=10, on_train=False):
+def evaluate_write_jsonl(data_source, out_file, jsonl_out_file, batch_size=10):
     # Turn on evaluation mode which disables dropout.
     model_gen.eval()
     model_disc.eval()
     langModel.eval()
 
     total_loss_lm = 0
-    ntokens = len(corpus.dictionary)
     tot_count = 0
     correct_msg_count = 0
     tot_count_bits = 0
@@ -293,8 +284,8 @@ def evaluate(data_source, out_file, batch_size=10, on_train=False):
     y_out = []
     y_label = []
     for i in range(0, data_source.size(0) - args.bptt, args.bptt):
-        data, msgs, targets = get_batch_different(
-            data_source, i, args, all_msgs, evaluation=True
+        data, msgs, targets = get_batch_fixed(
+            data_source, i, args, [1, 1, 0, 0], evaluation=True
         )
         long_msg[
             :,
@@ -395,53 +386,57 @@ def evaluate(data_source, out_file, batch_size=10, on_train=False):
                 total_loss_lm += lm_loss.data
                 hidden = repackage_hidden(hidden)
 
-            if bert_diff[best_beam_idx] < args.bert_threshold:
-                long_msg_out[
-                    :,
-                    long_msg_count * args.msg_len : long_msg_count * args.msg_len
-                    + args.msg_len,
-                ] = msg_out
-                l2_distances = l2_distances + bert_diff[best_beam_idx]
-                # meteor_tot = meteor_tot + meteor_beams[best_beam_idx]
-                out_file.write("****" + "\n")
-                out_file.write("sample #" + str(batch_count) + "\n")
+            # bit accuracy
+            long_msg_out[
+                :,
+                long_msg_count * args.msg_len : long_msg_count * args.msg_len
+                + args.msg_len,
+            ] = msg_out
+            l2_distances = l2_distances + bert_diff[best_beam_idx]
+            # meteor_tot = meteor_tot + meteor_beams[best_beam_idx]
+            out_file.write("****" + "\n")
+            out_file.write("sample #" + str(batch_count) + "\n")
 
-                if batch_count % 250 == 0:
-                    print(f"batch_count: {batch_count}")
+            if batch_count % 250 == 0:
+                print(f"batch_count: {batch_count}")
 
-                # meteor_pair = meteor_beams[best_beam_idx]
-                # out_file.write(str(meteor_pair) + '\n')
-                out_file.write("bert_diff: " + str(bert_diff[best_beam_idx]) + "\n")
-                out_file.write("original text: " + orig_text + "\n")
-                out_file.write(
-                    "modified text: " + output_text_beams[best_beam_idx] + "\n"
+            # meteor_pair = meteor_beams[best_beam_idx]
+            # out_file.write(str(meteor_pair) + '\n')
+            out_file.write("bert_diff: " + str(bert_diff[best_beam_idx]) + "\n")
+            out_file.write("original text: " + orig_text + "\n")
+            out_file.write("modified text: " + output_text_beams[best_beam_idx] + "\n")
+            out_file.write(
+                "correct bits: "
+                + str(compare_msg_bits(msgs, torch.round(sig(msg_out))))
+                + "\n"
+            )
+            out_file.write(
+                "gt msg: "
+                + np.array2string(msgs.detach().cpu().numpy().astype(int))
+                + "\n"
+            )
+            out_file.write(
+                "decoded msg: "
+                + np.array2string(
+                    torch.round(sig(msg_out)).detach().cpu().numpy().astype(int)
                 )
-                out_file.write(
-                    "correct bits: "
-                    + str(compare_msg_bits(msgs, torch.round(sig(msg_out))))
-                    + "\n"
-                )
-                out_file.write(
-                    "gt msg: "
-                    + np.array2string(msgs.detach().cpu().numpy().astype(int))
-                    + "\n"
-                )
-                out_file.write(
-                    "decoded msg: "
-                    + np.array2string(
-                        torch.round(sig(msg_out)).detach().cpu().numpy().astype(int)
-                    )
-                    + "\n"
-                )
-            else:
-                # meteor_pair = 1
-                # meteor_tot = meteor_tot + meteor_pair
-                msg_out_random = model_gen.forward_msg_decode(data_emb)
-                long_msg_out[
-                    :,
-                    long_msg_count * args.msg_len : long_msg_count * args.msg_len
-                    + args.msg_len,
-                ] = msg_out_random
+                + "\n"
+            )
+
+            obj = {
+                "original_text": orig_text,
+                "after_watermark": output_text_beams[best_beam_idx],
+                "watermark": torch.round(sig(msg_out))
+                .detach()
+                .cpu()
+                .long()
+                .tolist()[0],
+                "extract": torch.round(sig(msg_out)).detach().cpu().long().tolist()[0],
+            }
+
+            jsonl_out_file.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+        # long message acc
         if batch_count != 0 and (batch_count + 1) % args.msgs_segment == 0:
             long_msg_count = 0
             tot_count = tot_count + 1
@@ -500,8 +495,25 @@ if args.cuda:
     model_gen.cuda()
     model_disc.cuda()
 
+f = open("train_out_bert.txt", "w")
+f_metrics = open("train_out_metrics_bert.txt", "w")
+jsonl_fo = open("train_out_bert.jsonl", "w", encoding="utf-8")
+(
+    train_lm_loss,
+    train_correct_msg,
+    train_correct_bits_msg,
+    train_meteor,
+    train_l2_sbert,
+    train_correct_fake,
+    train_correct_real,
+    train_Fscore,
+    train_pvalue,
+    train_pvalue_inst,
+) = evaluate_write_jsonl(train_data, f, jsonl_fo, eval_batch_size)
+
 f = open("val_out_bert.txt", "w")
 f_metrics = open("val_out_metrics_bert.txt", "w")
+jsonl_fo = open("val_out_bert.jsonl", "w", encoding="utf-8")
 (
     val_lm_loss,
     val_correct_msg,
@@ -513,7 +525,7 @@ f_metrics = open("val_out_metrics_bert.txt", "w")
     val_Fscore,
     val_pvalue,
     val_pvalue_inst,
-) = evaluate(val_data, f, eval_batch_size)
+) = evaluate_write_jsonl(val_data, f, jsonl_fo, eval_batch_size)
 
 print("-" * 150)
 print(
@@ -536,6 +548,7 @@ f.close()
 # Run on test data.
 f = open("test_out.txt", "w")
 f_metrics = open("test_out_metrics.txt", "w")
+jsonl_fo = open("test_out_bert.jsonl", "w", encoding="utf-8")
 (
     test_lm_loss,
     test_correct_msg,
@@ -547,7 +560,7 @@ f_metrics = open("test_out_metrics.txt", "w")
     test_Fscore,
     test_pvalue,
     test_pvalue_inst,
-) = evaluate(test_data, f, test_batch_size)
+) = evaluate_write_jsonl(test_data, f, jsonl_fo, test_batch_size)
 
 print("=" * 150)
 print(

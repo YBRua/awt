@@ -13,7 +13,7 @@ import model_discriminator_lstm
 
 from sklearn.metrics import f1_score
 
-from utils import batchify, get_batch_different, generate_msgs, repackage_hidden, get_batch_no_msg
+from utils import batchify, get_batch_fixed, generate_msgs, repackage_hidden, get_batch_no_msg
 
 parser = argparse.ArgumentParser(description='PyTorch PennTreeBank RNN/LSTM Language Model')
 parser.add_argument('--data', type=str, default='data/penn/',
@@ -94,7 +94,7 @@ def evaluate(data_source_real, data_source_fake, batch_size=10):
         label = torch.full( (data_real.size(1),1), real_label)
         if args.cuda:
             label = label.cuda()
-        errD_real = criterion(real_out,label)
+        errD_real = criterion(real_out,label.float())
         real_out_label = torch.round(sig(real_out))
         real_correct = real_correct + np.count_nonzero(np.equal(label.detach().cpu().numpy().astype(int),real_out_label.detach().cpu().numpy().astype(int))==True) 
         y_label.append(label.detach().cpu().numpy().astype(int)[0,0])
@@ -102,7 +102,7 @@ def evaluate(data_source_real, data_source_fake, batch_size=10):
 		#get prediction (and the loss) of the discriminator on the fake sequence.
 
         label.fill_(fake_label)
-        errD_fake = criterion(fake_out,label)
+        errD_fake = criterion(fake_out,label.float())
         errD = errD_real + errD_fake
         fake_out_label = torch.round(sig(fake_out))
         fake_correct = fake_correct + np.count_nonzero(np.equal(label.detach().cpu().numpy().astype(int),fake_out_label.detach().cpu().numpy().astype(int))==True)

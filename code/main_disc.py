@@ -13,7 +13,7 @@ import model_discriminator
 import model_discriminator_lstm
 
 
-from utils import batchify, get_batch_different, generate_msgs, repackage_hidden, get_batch_no_msg
+from utils import batchify, get_batch_fixed, generate_msgs, repackage_hidden, get_batch_no_msg
 
 parser = argparse.ArgumentParser(description='PyTorch PennTreeBank RNN/LSTM Language Model')
 parser.add_argument('--data', type=str, default='data/penn/',
@@ -240,11 +240,11 @@ def evaluate(data_source_real, data_source_fake, batch_size=10):
         label = torch.full( (data_real.size(1),1), real_label)
         if args.cuda:
             label = label.cuda()
-        errD_real = criterion(real_out,label)
+        errD_real = criterion(real_out,label.float())
 		#get prediction (and the loss) of the discriminator on the fake sequence.
 
         label.fill_(fake_label)
-        errD_fake = criterion(fake_out,label)
+        errD_fake = criterion(fake_out,label.float())
         errD = errD_real + errD_fake
 		
         total_loss_disc +=  errD.data
@@ -291,14 +291,14 @@ def train():
 		#get the embeddings from the generator network of the real 
         real_out = model_disc.forward(data_real)
 
-        errD_real = criterion(real_out,label)
+        errD_real = criterion(real_out, label.float())
         errD_real.backward()
 
         # Train with all-fake batch #
         fake_out = model_disc.forward(data_fake)
 
         label.fill_(fake_label)
-        errD_fake = criterion(fake_out,label)
+        errD_fake = criterion(fake_out, label.float())
         errD_fake.backward()
         # add the gradients #
         errD = errD_real + errD_fake
