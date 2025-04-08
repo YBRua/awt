@@ -16,7 +16,7 @@ conda activate torch112
 CUDA_VISIBLE_DEVICES=3 python "csn_sampling_bert.py" \
  --msg_len 4 \
  --vocab_source /mnt/disk3/borui/awt-orig/code/data/CodeSearchNet/javascript/train_0.json\
- --data /home/liwei/codemark_dataset/javascript \
+ --data ./data/CodeSearchNet/javascript \
  --lang javascript \
  --split test \
  --msgs_segment 1 \
